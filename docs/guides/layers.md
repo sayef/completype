@@ -4,7 +4,7 @@ Most completion systems give every audience its own copy of the index: one per c
 language, one per experiment. Each copy is built, stored, kept in memory and updated on its own, so a fix
 to one song's title means rebuilding all of them.
 
-completr searches a **stack of indexes** instead. The bottom layer is the shared catalogue, built once.
+typemind searches a **stack of indexes** instead. The bottom layer is the shared catalogue, built once.
 Each layer above it holds only what differs for an audience: renamed songs, removed songs, extra songs,
 different popularity. Later layers win per document id. A query names the stack it wants, so one engine
 serves every tenant, language, user and experiment from one copy of the catalogue.
@@ -40,8 +40,8 @@ no layer of their own yet (see [Missing layers](#missing-layers)).
 === "Python"
 
     ```python
-    import completr
-    from completr import Engine, Index, Segment
+    import typemind
+    from typemind import Engine, Index, Segment
 
     catalog = Index.from_documents([
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -64,7 +64,7 @@ no layer of their own yet (see [Missing layers](#missing-layers)).
 
     ```rust
     use std::sync::Arc;
-    use completr::Engine;
+    use typemind::Engine;
 
     let engine = Engine::new();
     engine.publish([
@@ -248,7 +248,7 @@ its own catalogue and its own tenant layers, a market, an environment. Use layer
 that overrides by document id.
 
 ```python
-db = completr.connect("./data")
+db = typemind.connect("./data")
 with db.namespace("de").begin() as txn:
     txn.append("catalog", [
         {"id": "luftballons", "text": "99 Luftballons – Nena", "popularity": 0.98},

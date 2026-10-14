@@ -1,18 +1,18 @@
-"""A completion API over a completr database: COMPLETR_URL=./completions uvicorn app:app"""
+"""A completion API over a typemind database: TYPEMIND_URL=./completions uvicorn app:app"""
 
 import os
 from typing import Annotated
 
-import completr
+import typemind
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
-DATABASE_URL = os.environ.get("COMPLETR_URL", "./completions")
-INDEX = os.environ.get("COMPLETR_INDEX", "songs")
-CACHE_DIR = os.environ.get("COMPLETR_CACHE_DIR")
-SYNC_SECONDS = float(os.environ.get("COMPLETR_SYNC_SECONDS", "5"))
+DATABASE_URL = os.environ.get("TYPEMIND_URL", "./completions")
+INDEX = os.environ.get("TYPEMIND_INDEX", "songs")
+CACHE_DIR = os.environ.get("TYPEMIND_CACHE_DIR")
+SYNC_SECONDS = float(os.environ.get("TYPEMIND_SYNC_SECONDS", "5"))
 
-db = completr.connect(DATABASE_URL, cache_dir=CACHE_DIR)
+db = typemind.connect(DATABASE_URL, cache_dir=CACHE_DIR)
 engine = db.engine(sync_every=SYNC_SECONDS)
 
 
@@ -24,7 +24,7 @@ class Suggestion(BaseModel):
     highlights: list[tuple[int, int]]
 
 
-app = FastAPI(title="completr completions")
+app = FastAPI(title="typemind completions")
 
 
 @app.get("/complete")

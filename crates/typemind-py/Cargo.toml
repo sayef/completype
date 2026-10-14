@@ -1,0 +1,24 @@
+[package]
+name = "typemind-py"
+description = "Python bindings for typemind"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "typemind"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
+pyo3-log = "0.13"
+tracing = { version = "0.1", default-features = false, features = ["log"] }
+typemind_rs = { package = "typemind", path = "../typemind", features = ["aws-credentials", "gcp", "azure"] }
+
+# Not on macOS, where every mimalloc in a process shares fixed thread slots and pyarrow ships one.
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }

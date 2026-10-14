@@ -75,7 +75,7 @@ dots = "".join(
 )
 svg = (
     f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
-    f'aria-label="completr completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix">'
+    f'aria-label="typemind completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix">'
     + "".join(parts) + dots + "</svg>\n"
 )
 if FRAME >= 0:

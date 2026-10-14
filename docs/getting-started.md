@@ -9,7 +9,7 @@ object storage.
 === "Python"
 
     ```sh
-    pip install completr
+    pip install typemind
     ```
 
     The wheel is abi3 for CPython 3.11 and newer, and includes every storage backend. It releases the GIL
@@ -18,8 +18,8 @@ object storage.
 === "Rust"
 
     ```sh
-    cargo add completr --features store                       # databases on local disk and in memory
-    cargo add completr --features aws-credentials,gcp,azure   # plus S3, GCS and Azure
+    cargo add typemind --features store                       # databases on local disk and in memory
+    cargo add typemind --features aws-credentials,gcp,azure   # plus S3, GCS and Azure
     cargo add tokio --features macros,rt-multi-thread         # the database API is async
     ```
 
@@ -38,7 +38,7 @@ an embedding. `Index.from_documents` builds an index from documents in memory, w
 === "Python"
 
     ```python
-    from completr import Index
+    from typemind import Index
 
     docs = [
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95, "synonyms": ["is this the real life"]},
@@ -55,7 +55,7 @@ an embedding. `Index.from_documents` builds an index from documents in memory, w
 === "Rust"
 
     ```rust
-    use completr::{Document, Index};
+    use typemind::{Document, Index};
 
     let index = Index::from_documents([
         Document::keyed("bohemian", "Bohemian Rhapsody – Queen", 0.95)
@@ -129,16 +129,16 @@ print(index.complete_aliases("is this the real life"))
 
 ## A database
 
-A database keeps named indexes in a directory or a bucket. `completr.connect(url)` opens one, and creates a
+A database keeps named indexes in a directory or a bucket. `typemind.connect(url)` opens one, and creates a
 local one if it does not exist. A transaction changes one or more indexes and commits a new **version** of
 the database. An engine from the database serves its indexes.
 
 === "Python"
 
     ```python
-    import completr
+    import typemind
 
-    db = completr.connect("./data")
+    db = typemind.connect("./data")
     txn = db.begin()
     txn.append("songs", docs)   # creates the index "songs"
     print(txn.commit()["version"])
@@ -151,7 +151,7 @@ the database. An engine from the database serves its indexes.
 
     ```rust
     use std::{sync::Arc, time::Duration};
-    use completr::{Database, Engine, IndexOptions, Replica};
+    use typemind::{Database, Engine, IndexOptions, Replica};
 
     let database = Database::open("./data", Vec::<(String, String)>::new()).await?;
     let mut txn = database.begin().await?;
@@ -185,7 +185,7 @@ downloads only segments the engine does not hold, and queries never wait for it.
 ```python
 import time
 
-engine = completr.connect("./data").engine(sync_every=1.0)   # in a serving process
+engine = typemind.connect("./data").engine(sync_every=1.0)   # in a serving process
 print(engine.complete("blind", ["songs"]))                    # starts the background sync
 
 txn = db.begin()                                               # in another process
@@ -221,7 +221,7 @@ The same code works on S3, Google Cloud Storage and Azure Blob Storage: only the
 
 <!-- skip-test -->
 ```python
-db = completr.connect("s3://my-bucket/completions", cache_dir="/var/cache/completr")
+db = typemind.connect("s3://my-bucket/completions", cache_dir="/var/cache/typemind")
 # or "gs://bucket/prefix", "az://container/prefix"
 ```
 
@@ -230,12 +230,12 @@ compaction, cleanup and what each process does.
 
 ## Or use collections
 
-`completr.Client` is a convenience layer over a database: named collections that keep their settings,
+`typemind.Client` is a convenience layer over a database: named collections that keep their settings,
 compact themselves after writes, report `stats()`, and complete synonyms in the same call. A collection is
 an index of the same name, so both work on the same database.
 
 ```python
-client = completr.Client("./data")
+client = typemind.Client("./data")
 print(client.collections(), [s.text for s in client["songs"].complete("blind")])
 ```
 

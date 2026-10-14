@@ -734,58 +734,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "completr"
-version = "0.2.3"
-dependencies = [
- "arc-swap",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "criterion",
- "fsst-rs",
- "fst",
- "futures",
- "libc",
- "memmap2",
- "object_store",
- "rapidfuzz",
- "rayon",
- "rustc-hash",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "turbovec",
- "url",
- "uuid",
- "xxhash-rust",
- "zstd",
-]
-
-[[package]]
-name = "completr-cli"
-version = "0.2.3"
-dependencies = [
- "clap",
- "completr",
- "serde_json",
- "tokio",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "completr-py"
-version = "0.2.3"
-dependencies = [
- "completr",
- "mimalloc",
- "pyo3",
- "pyo3-log",
- "tracing",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2348,9 +2296,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -2991,6 +2939,58 @@ dependencies = [
  "rand_chacha",
  "rayon",
  "statrs",
+]
+
+[[package]]
+name = "typemind"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "criterion",
+ "fsst-rs",
+ "fst",
+ "futures",
+ "libc",
+ "memmap2",
+ "object_store",
+ "rapidfuzz",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "turbovec",
+ "url",
+ "uuid",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
+name = "typemind-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+ "typemind",
+]
+
+[[package]]
+name = "typemind-py"
+version = "0.1.0"
+dependencies = [
+ "mimalloc",
+ "pyo3",
+ "pyo3-log",
+ "tracing",
+ "typemind",
 ]
 
 [[package]]

@@ -141,7 +141,7 @@ def run(a):
     res = {"engine": a.engine, "variant": a.variant, "date": datetime.date.today().isoformat(), "machine": machine()}
     try:
         if e.in_process:
-            if a.engine == "completr" and not a.variant:
+            if a.engine == "typemind" and not a.variant:
                 res["build_8_threads"] = sub("build", a.engine, "8")
                 if not string_ids():
                     res["build_uuid"] = sub("build", a.engine, "uuid")

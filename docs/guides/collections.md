@@ -1,6 +1,6 @@
 # Collections
 
-`completr.Client` is a convenience layer over a [database](serverless.md). It manages named
+`typemind.Client` is a convenience layer over a [database](serverless.md). It manages named
 **collections**: each is an index of the same name, so a client and the building blocks work on the same
 database. A client adds:
 
@@ -24,9 +24,9 @@ scores, or getting a document by id. Use the building blocks for those: `client.
 === "Python"
 
     ```python
-    import completr
+    import typemind
 
-    client = completr.Client("./data")   # in memory when omitted; or s3://bucket/prefix, gs://..., az://...
+    client = typemind.Client("./data")   # in memory when omitted; or s3://bucket/prefix, gs://..., az://...
     songs = client.get_or_create_collection("songs")
     songs.add([
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95, "synonyms": ["is this the real life"]},
@@ -42,10 +42,10 @@ scores, or getting a document by id. Use the building blocks for those: `client.
 === "Rust"
 
     ```rust
-    use completr::{connect, ConnectOptions, Document, Optimize, Query};
+    use typemind::{connect, ConnectOptions, Document, Optimize, Query};
 
     #[tokio::main]
-    async fn main() -> Result<(), completr::Error> {
+    async fn main() -> Result<(), typemind::Error> {
         let client = connect("./data", ConnectOptions::default()).await?;
         let songs = client.get_or_create_collection("songs", Optimize::default()).await?;
         songs
@@ -71,8 +71,8 @@ danc [('Dancing Queen – ABBA', MatchKind.PREFIX, 0.547, 'songs'), ('Dancing in
 RHCP [('Under the Bridge – Red Hot Chili Peppers', MatchKind.ABBREVIATION, 0.486, 'songs')]
 ```
 
-In Python, `completr.connect` returns a `Database` and `completr.Client` a collections client. In Rust,
-`completr::connect` returns the collections `Client`, and `Database::open` a database.
+In Python, `typemind.connect` returns a `Database` and `typemind.Client` a collections client. In Rust,
+`typemind::connect` returns the collections `Client`, and `Database::open` a database.
 
 `add` replaces documents with the same id, and returns the new version of the database once the write is
 durable. `delete(ids)` removes documents. Both are visible to this client at once. `Client` takes the same
@@ -162,7 +162,7 @@ yourself.
 ```python
 import time
 
-reader = completr.Client("./data", sync_every=1.0)   # in a serving process
+reader = typemind.Client("./data", sync_every=1.0)   # in a serving process
 served = reader["songs"]
 
 songs.add([{"id": "blinding", "text": "Blinding Lights – The Weeknd", "popularity": 0.9}])   # in another process
@@ -254,4 +254,4 @@ database.cleanup(keep_versions=10, older_than_seconds=3600)
 Document(id='dancing', text='Dancing Queen – ABBA', popularity=0.85)
 ```
 
-For asyncio, `completr.AsyncClient` has the same methods, awaited; see [asyncio](asyncio.md#collections).
+For asyncio, `typemind.AsyncClient` has the same methods, awaited; see [asyncio](asyncio.md#collections).

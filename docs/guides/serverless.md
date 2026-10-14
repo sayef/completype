@@ -1,6 +1,6 @@
 # Serverless deployment
 
-A completr deployment has no completr server. It has a bucket or directory (the database), and your
+A typemind deployment has no typemind server. It has a bucket or directory (the database), and your
 processes: some commit transactions, and the ones that answer requests serve an engine that follows the
 database. This page covers storage, credentials, transactions, serving, compaction, cleanup, leases and
 memory.
@@ -12,7 +12,7 @@ memory.
 
 ## Storage backends
 
-`completr.connect(url)` opens a database. Local directories are created if they do not exist.
+`typemind.connect(url)` opens a database. Local directories are created if they do not exist.
 
 | URL | Backend |
 |---|---|
@@ -28,21 +28,21 @@ exclusive create on a file system.
 === "Python"
 
     ```python
-    import completr
+    import typemind
 
-    db = completr.connect("./data")   # or s3://bucket/prefix, gs://..., az://..., memory://
+    db = typemind.connect("./data")   # or s3://bucket/prefix, gs://..., az://..., memory://
     ```
 
 === "Rust"
 
     ```rust
-    use completr::Database;
+    use typemind::Database;
 
     let database = Database::open("./data", Vec::<(String, String)>::new()).await?;
     ```
 
-The database API is async in Rust and runs on Tokio. From synchronous code, `completr::block_on` runs one
-of its futures on completr's internal runtime; do not call it from async code.
+The database API is async in Rust and runs on Tokio. From synchronous code, `typemind::block_on` runs one
+of its futures on typemind's internal runtime; do not call it from async code.
 
 ## Credentials
 
@@ -52,7 +52,7 @@ the bucket. Explicit `options` override all of them:
 
 <!-- skip-test -->
 ```python
-db = completr.connect(
+db = typemind.connect(
     "s3://my-bucket/completions",
     options={"aws_region": "eu-central-1", "aws_access_key_id": "...", "aws_secret_access_key": "..."},
 )
@@ -69,15 +69,15 @@ pairs passed to `Database::open`.
 
 ### Object tags
 
-`tags` puts the same tags on every object completr writes: segments, manifests, change sets and leases.
+`tags` puts the same tags on every object typemind writes: segments, manifests, change sets and leases.
 Use them where a bucket selects lifecycle rules, replication or cost allocation by tag:
 
 <!-- skip-test -->
 ```python
-db = completr.connect("s3://bucket/completions", tags={"LifecycleRule": "KeepForever"})
+db = typemind.connect("s3://bucket/completions", tags={"LifecycleRule": "KeepForever"})
 ```
 
-Pick a rule that never expires or archives objects. completr deletes what it no longer needs itself, with
+Pick a rule that never expires or archives objects. typemind deletes what it no longer needs itself, with
 [cleanup](#cleanup), while a segment still in use can be months old. S3 needs `s3:PutObjectTagging` for
 tagged writes. In Rust the option is `Database::with_tags`, and on the command line `--tag KEY=VALUE`.
 
@@ -91,7 +91,7 @@ databases, whose files are memory-mapped directly.
 
 <!-- skip-test -->
 ```python
-db = completr.connect("s3://my-bucket/completions", cache_dir="/var/cache/completr")
+db = typemind.connect("s3://my-bucket/completions", cache_dir="/var/cache/typemind")
 ```
 
 In Rust, use `Database::with_cache_dir`.
@@ -114,7 +114,7 @@ durable.
 === "Rust"
 
     ```rust
-    use completr::Document;
+    use typemind::Document;
 
     let mut txn = database.begin().await?;
     txn.append_documents(
@@ -145,7 +145,7 @@ newer one and retries, with backoff. Commits to different indexes, and to differ
 index, never conflict; a later commit wins per document id. In strict mode, a commit fails instead:
 
 ```python
-from completr import ConflictError
+from typemind import ConflictError
 
 txn = db.begin()
 txn.strict()
@@ -204,7 +204,7 @@ search in progress keeps the version it started with.
 
     ```rust
     use std::{sync::Arc, time::Duration};
-    use completr::{Engine, IndexOptions, Replica};
+    use typemind::{Engine, IndexOptions, Replica};
 
     let engine = Arc::new(Engine::new());
     let replica = Arc::new(Replica::new(database.clone(), IndexOptions::default()));
@@ -233,7 +233,7 @@ Python, `db.engine()` combines the two, and `Replica(database, engine)` is also 
 
 ### Forking servers
 
-completr's database calls run on a runtime shared by the process, and that runtime does not survive
+typemind's database calls run on a runtime shared by the process, and that runtime does not survive
 `fork()`. With a server that imports your app and then forks workers (gunicorn's `--preload`, or any
 pre-forking server), open databases and engines in each worker after it forks, not before. Servers that
 start each worker as a fresh process, such as uvicorn with `--workers`, need nothing special.
@@ -312,12 +312,12 @@ The [ingestor](writers.md) uses a lease named `ingestor`.
 
 | Task | Suggested schedule | Command-line equivalent |
 |---|---|---|
-| Bulk load | When the source data changes | `completr <url> import <index> <file>` |
-| Compaction | After bulk loads and direct commits | `completr <url> compact <index>` |
-| Cleanup | Hourly or daily | `completr <url> cleanup --keep-versions 10 --older-than-seconds 3600` |
+| Bulk load | When the source data changes | `typemind <url> import <index> <file>` |
+| Compaction | After bulk loads and direct commits | `typemind <url> compact <index>` |
+| Cleanup | Hourly or daily | `typemind <url> cleanup --keep-versions 10 --older-than-seconds 3600` |
 
 For asyncio services, see [asyncio](asyncio.md) and the
-[FastAPI example](https://github.com/sayef/completr/tree/main/examples/fastapi).
+[FastAPI example](https://github.com/mindyard/typemind/tree/main/examples/fastapi).
 
 ## Memory
 

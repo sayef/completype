@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/completr", "crates/completr-cli", "crates/completr-py"]
+members = ["crates/typemind", "crates/typemind-cli", "crates/typemind-py"]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.94.1"
 license = "MIT"
 authors = ["Saiful Islam"]
-repository = "https://github.com/sayef/completr"
-homepage = "https://github.com/sayef/completr"
+repository = "https://github.com/mindyard/typemind"
+homepage = "https://github.com/mindyard/typemind"
 
 [profile.release]
 lto = "thin"

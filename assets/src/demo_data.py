@@ -1,8 +1,8 @@
-"""Computes the demo scenes with completr itself; writes demo.json next to this file."""
+"""Computes the demo scenes with typemind itself; writes demo.json next to this file."""
 
 import json
 from pathlib import Path
-from completr import Index
+from typemind import Index
 
 titles = [
     ("Bohemian Rhapsody – Queen", 0.95, [("is this the real life", False)]), ("Killer Queen – Queen", 0.6, []),

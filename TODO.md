@@ -29,7 +29,7 @@ Open items: measurements still to make, and gaps the benchmarks show. Remove an 
 
 ## API
 
-- **Queued writes for collections.** `completr.Client(..., writes="queued")` routing `add` and `delete`
+- **Queued writes for collections.** `typemind.Client(..., writes="queued")` routing `add` and `delete`
   through the inbox and a lease-elected ingestor, for fleets of writers whose commits keep colliding.
 - **Surviving `fork()`.** The shared tokio runtime does not survive a fork, so a database or engine opened
   before a pre-forking server forks (gunicorn `--preload`) cannot be used in the children; restart the

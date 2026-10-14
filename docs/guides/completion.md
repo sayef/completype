@@ -21,7 +21,7 @@ An `Index` searches one index. An `Engine`, including one from `db.engine()`, an
 take `SearchOptions`:
 
 ```rust
-use completr::SearchOptions;
+use typemind::SearchOptions;
 
 let pop = SearchOptions::new(5).contexts(["pop"]);
 let hits = index.complete_with("danc", &pop);
@@ -31,7 +31,7 @@ let layered = engine.complete_with(&["songs"], "danc", &pop)?;
 The examples on this page use this index:
 
 ```python
-from completr import Index
+from typemind import Index
 
 index = Index.from_documents([
     {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95, "synonyms": ["is this the real life"], "contexts": ["rock"]},
@@ -142,7 +142,7 @@ returns up to `limit` results.
 ['Dancing Queen – ABBA', 'Dancing in the Dark – Bruce Springsteen']
 ```
 
-Contexts are the only filter completr has. Use them for genres, tenants or languages, or use separate
+Contexts are the only filter typemind has. Use them for genres, tenants or languages, or use separate
 indexes and [layers](layers.md) when the partitions are large.
 
 ## Synonyms

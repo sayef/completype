@@ -1,8 +1,8 @@
-site_name: completr
+site_name: typemind
 site_description: "Serverless autocompletion: an embedded engine whose database is a bucket."
-site_url: https://completr.pages.dev/
-repo_url: https://github.com/sayef/completr
-repo_name: sayef/completr
+site_url: https://typemind.pages.dev/
+repo_url: https://github.com/mindyard/typemind
+repo_name: mindyard/typemind
 edit_uri: edit/main/docs/
 copyright: Copyright &copy; Saiful Islam. Released under the MIT License.
 
@@ -56,7 +56,7 @@ plugins:
       default_handler: python
       handlers:
         python:
-          paths: [crates/completr-py/python]
+          paths: [crates/typemind-py/python]
           options:
             allow_inspection: false
             show_root_heading: true
@@ -146,4 +146,4 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/sayef/completr
+      link: https://github.com/mindyard/typemind

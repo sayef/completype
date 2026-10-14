@@ -63,36 +63,36 @@ def du(path):
     return int(out.split()[0]) * 1024
 
 
-class Completr:
-    """The installed completr package with default Index settings, built through a SegmentWriter.
+class Typemind:
+    """The installed typemind package with default Index settings, built through a SegmentWriter.
 
     Documents stream into the writer, which writes a segment file whenever building more would pass its
     memory budget, as tantivy's writer flushes a segment when its budget fills. The segments are then
     compacted into one, inside the timed build; with `compact=False` they are kept, and an index of several
     segments ranks exactly like one."""
-    name = "completr"
+    name = "typemind"
     in_process = True
-    MEMORY_BUDGET = int(float(os.environ.get("BENCH_COMPLETR_MEMORY_BUDGET_MB", 256)) * (1 << 20))
+    MEMORY_BUDGET = int(float(os.environ.get("BENCH_TYPEMIND_MEMORY_BUDGET_MB", 256)) * (1 << 20))
 
     def __init__(self, threads=1, uuid_ids=False, compact=True):
-        self.version = "completr " + md.version("completr")
+        self.version = "typemind " + md.version("typemind")
         self.uuid_ids = uuid_ids
         self.compact = compact
         tag = "-uuid" if uuid_ids else "" if compact else "-segments"
-        self.dir = work_dir() / ("completr" + tag + ("" if threads == 1 else f"-{threads}"))
+        self.dir = work_dir() / ("typemind" + tag + ("" if threads == 1 else f"-{threads}"))
         self.threads = threads
 
     def paths(self):
         return sorted(self.dir.glob("*.seg"))
 
     def build(self, docs):
-        import completr
+        import typemind
         shutil.rmtree(self.dir, ignore_errors=True)
         self.dir.mkdir(parents=True)
         m = docs.max_score
         doc_id = (lambda d: str(uuid.uuid5(uuid.NAMESPACE_URL, f"doc:{d['id']}"))) if self.uuid_ids else (lambda d: d["id"])
         t = time.perf_counter()
-        writer = completr.SegmentWriter(self.dir, memory_budget=self.MEMORY_BUDGET, build_threads=self.threads)
+        writer = typemind.SegmentWriter(self.dir, memory_budget=self.MEMORY_BUDGET, build_threads=self.threads)
         # Columns, 8,192 documents at a time: the writer's fast path for documents of a text alone.
         rows = iter(docs)
         while chunk := list(itertools.islice(rows, 1 << 13)):
@@ -101,7 +101,7 @@ class Completr:
         built = writer.finish()
         written, written_s = len(built), time.perf_counter() - t
         if self.compact and written > 1:
-            index = completr.Index(built)
+            index = typemind.Index(built)
             index.compact(path=self.dir / "compacted.part", build_threads=self.threads)
             del index, built
             for p in self.paths():
@@ -114,9 +114,9 @@ class Completr:
                 "ids": "uuid strings" if self.uuid_ids else "integers"}
 
     def open(self):
-        import completr
+        import typemind
         t = time.perf_counter()
-        self.index = completr.Index([completr.Segment.open(p) for p in self.paths()])
+        self.index = typemind.Index([typemind.Segment.open(p) for p in self.paths()])
         return time.perf_counter() - t
 
     def search(self, q):
@@ -411,9 +411,9 @@ class Meilisearch(Server):
 
 
 def make(name, variant=None, key=None):
-    if name == "completr":
+    if name == "typemind":
         v = variant or ""
-        return Completr(threads=int(v) if v.isdigit() else 1, uuid_ids=v == "uuid", compact=v != "segments")
+        return Typemind(threads=int(v) if v.isdigit() else 1, uuid_ids=v == "uuid", compact=v != "segments")
     if name == "tantivy":
         return Tantivy()
     if name == "typesense":

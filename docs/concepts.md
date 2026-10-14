@@ -1,6 +1,6 @@
 # Concepts
 
-completr has a small model: documents go into immutable segments, segments make up an index, an engine
+typemind has a small model: documents go into immutable segments, segments make up an index, an engine
 serves indexes by name, and a database keeps versions of named indexes in storage. This page introduces
 each part. [Architecture](architecture.md) has the full detail.
 
@@ -14,11 +14,11 @@ flowchart LR
         M["_versions/ manifests"]
         S["segments/ immutable files"]
     end
-    M -- "new versions" --> F1["Your app + completr<br/>engine.complete(...)"]
+    M -- "new versions" --> F1["Your app + typemind<br/>engine.complete(...)"]
     S -- "changed segments" --> F1
-    M --> F2["Your app + completr"]
+    M --> F2["Your app + typemind"]
     S --> F2
-    M --> F3["Your app + completr"]
+    M --> F3["Your app + typemind"]
     S --> F3
 ```
 
@@ -34,7 +34,7 @@ flowchart LR
 
 A document is what users complete to: an id, one text, a popularity weight, and optionally synonyms,
 abbreviations, context tags and an embedding. Ids are integers or strings; a string id is hashed to a
-stable 64-bit id (`completr.key_id`) and returned as given. A newer document with the same id replaces the
+stable 64-bit id (`typemind.key_id`) and returned as given. A newer document with the same id replaces the
 older one. See [Documents](guides/documents.md).
 
 ## Segments and indexes
@@ -60,7 +60,7 @@ locale, index names, such as one per tenant, and layer lists. A layer that does 
 
 ## Databases and versions
 
-A **database** is a directory or a bucket prefix. `completr.connect(url)` opens one. Every commit writes a
+A **database** is a directory or a bucket prefix. `typemind.connect(url)` opens one. Every commit writes a
 new **version**: a manifest that maps index names to segment files.
 
 - **Transactions** change one or more indexes and commit them atomically. Writes never modify a segment;
@@ -108,6 +108,6 @@ for later appends, so scores stay comparable as the index changes.
 
 ## Collections
 
-`completr.Client` adds a convenience layer on top: named **collections**, each an index of the same name,
+`typemind.Client` adds a convenience layer on top: named **collections**, each an index of the same name,
 with settings stored in the database, automatic compaction after writes, `stats()`, and one `complete()`
 that also merges synonyms below direct matches. See [Collections](guides/collections.md).

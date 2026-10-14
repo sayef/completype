@@ -1,7 +1,7 @@
 # Many writers
 
 Every transaction is a commit, and commits from many processes contend on the next manifest. For many
-processes writing small changes at a high rate, completr has an inbox instead: any process submits a
+processes writing small changes at a high rate, typemind has an inbox instead: any process submits a
 `ChangeSet` without committing it, and an `Ingestor` commits pending change sets in order. Only the
 process holding the ingestor lease acts, so many processes can run one safely.
 
@@ -18,16 +18,16 @@ flowchart LR
     W -- "commit" --> M
     W -- "write, compact" --> S
     W -. "lease, fencing" .-> L
-    M -- "new versions" --> F1["Your app + completr<br/>engine.complete(...)"]
+    M -- "new versions" --> F1["Your app + typemind<br/>engine.complete(...)"]
     S -- "changed segments" --> F1
-    M --> F2["Your app + completr"]
+    M --> F2["Your app + typemind"]
     S --> F2
 ```
 
 !!! warning "Run ingestors outside serving processes"
     Building segments and compacting indexes use far more memory and CPU than serving. Build and
     compaction peaks belong to the ingestor, so run ingestors in separate processes (a worker, a cron job
-    or `completr ingest`), not inside the processes that answer completion requests.
+    or `typemind ingest`), not inside the processes that answer completion requests.
 
 | Role | Runs | Where |
 |---|---|---|
@@ -45,10 +45,10 @@ one process apply in submission order, and later change sets win per document id
 === "Python"
 
     ```python
-    import completr
-    from completr import ChangeSet, Ingestor
+    import typemind
+    from typemind import ChangeSet, Ingestor
 
-    db = completr.connect("./data")
+    db = typemind.connect("./data")
     changes = ChangeSet()
     changes.upsert("songs", [{"id": "billie", "text": "Billie Jean – Michael Jackson", "popularity": 0.9, "contexts": ["pop"]}])
     changes.delete("songs", ["s42"])
@@ -59,7 +59,7 @@ one process apply in submission order, and later change sets win per document id
 === "Rust"
 
     ```rust
-    use completr::{key_id, ChangeSet, Document};
+    use typemind::{key_id, ChangeSet, Document};
 
     let mut changes = ChangeSet::new();
     changes
@@ -102,7 +102,7 @@ ingestors for availability: only the lease holder acts, and another takes over w
 === "Rust"
 
     ```rust
-    use completr::{IngestStep, Ingestor};
+    use typemind::{IngestStep, Ingestor};
 
     let mut ingestor = Ingestor::new(database.clone(), "ingestor-1");
     if let IngestStep::Committed { version, .. } = ingestor.run_once().await? {
@@ -141,12 +141,12 @@ finally:
 Commits carry the lease generation as a fencing token, so an ingestor that lost its lease cannot commit,
 and a change set left over after a crash is never applied twice. Call `run_once()` well within
 `lease_ttl_seconds`: it renews the lease once a third of the TTL has passed, and loses it after the TTL.
-The command-line tool runs the same loop: `completr s3://my-bucket/completions ingest --interval 1`.
+The command-line tool runs the same loop: `typemind s3://my-bucket/completions ingest --interval 1`.
 
 Serving processes see the commits on their engine's next sync:
 
 ```python
-engine = completr.connect("./data").engine()
+engine = typemind.connect("./data").engine()
 print([(s.id, s.text, s.kind) for s in engine.complete("bill", ["songs"], contexts=["pop"])])
 ```
 
@@ -163,11 +163,11 @@ print([(s.id, s.text, s.kind) for s in engine.complete("bill", ["songs"], contex
 ```python
 import asyncio
 
-import completr
-from completr import Ingestor
+import typemind
+from typemind import Ingestor
 
 async def ingest():
-    db = await completr.AsyncDatabase("s3://my-bucket/completions").open()
+    db = await typemind.AsyncDatabase("s3://my-bucket/completions").open()
     ingestor = Ingestor(db.database, "worker-1")
     try:
         while True:
@@ -179,4 +179,4 @@ async def ingest():
 ```
 
 A runnable Rust example of this flow is
-[`live_updates.rs`](https://github.com/sayef/completr/blob/main/crates/completr/examples/live_updates.rs).
+[`live_updates.rs`](https://github.com/mindyard/typemind/blob/main/crates/typemind/examples/live_updates.rs).

@@ -1,14 +1,14 @@
 # Python API
 
-The reference for the `completr` package, generated from its typed stubs:
-[`__init__.pyi`](https://github.com/sayef/completr/blob/main/crates/completr-py/python/completr/__init__.pyi),
-[`completr.pyi`](https://github.com/sayef/completr/blob/main/crates/completr-py/python/completr/completr.pyi)
-and [`_async.pyi`](https://github.com/sayef/completr/blob/main/crates/completr-py/python/completr/_async.pyi).
-Every name on this page is importable from `completr`.
+The reference for the `typemind` package, generated from its typed stubs:
+[`__init__.pyi`](https://github.com/mindyard/typemind/blob/main/crates/typemind-py/python/typemind/__init__.pyi),
+[`typemind.pyi`](https://github.com/mindyard/typemind/blob/main/crates/typemind-py/python/typemind/typemind.pyi)
+and [`_async.pyi`](https://github.com/mindyard/typemind/blob/main/crates/typemind-py/python/typemind/_async.pyi).
+Every name on this page is importable from `typemind`.
 
 ## Databases
 
-::: completr.connect
+::: typemind.connect
     options:
       heading_level: 3
 
@@ -16,171 +16,171 @@ Every name on this page is importable from `completr`.
 `min_word_chars`, `max_edit_distance`, `fuzzy_prefix_chars`, `vector_bits`, `compact_keys` and
 `build_threads`. See [Configuration](../guides/configuration.md#database-options).
 
-::: completr.Database
+::: typemind.Database
     options:
       heading_level: 3
 
-::: completr.DatabaseNamespace
+::: typemind.DatabaseNamespace
     options:
       heading_level: 3
 
-::: completr.Transaction
+::: typemind.Transaction
     options:
       heading_level: 3
 
-::: completr.NamespaceTransaction
+::: typemind.NamespaceTransaction
     options:
       heading_level: 3
 
-::: completr.Lease
+::: typemind.Lease
     options:
       heading_level: 3
 
-::: completr.Store
+::: typemind.Store
     options:
       heading_level: 3
 
 ## Indexes and engines
 
-::: completr.Index
+::: typemind.Index
     options:
       heading_level: 3
 
-::: completr.Segment
+::: typemind.Segment
     options:
       heading_level: 3
 
-::: completr.SegmentWriter
+::: typemind.SegmentWriter
     options:
       heading_level: 3
 
-::: completr.Engine
+::: typemind.Engine
     options:
       heading_level: 3
 
-::: completr.Namespace
+::: typemind.Namespace
     options:
       heading_level: 3
 
-::: completr.Replica
+::: typemind.Replica
     options:
       heading_level: 3
 
 ## Many writers
 
-::: completr.ChangeSet
+::: typemind.ChangeSet
     options:
       heading_level: 3
 
-::: completr.NamespaceChanges
+::: typemind.NamespaceChanges
     options:
       heading_level: 3
 
-::: completr.Ingestor
+::: typemind.Ingestor
     options:
       heading_level: 3
 
 ## Documents
 
-::: completr.Document
+::: typemind.Document
     options:
       heading_level: 3
 
-::: completr.DocumentDict
+::: typemind.DocumentDict
     options:
       heading_level: 3
 
-::: completr.Id
+::: typemind.Id
     options:
       heading_level: 3
 
-::: completr.Documents
+::: typemind.Documents
     options:
       heading_level: 3
 
-::: completr.Vector
+::: typemind.Vector
     options:
       heading_level: 3
 
-::: completr.Vectors
+::: typemind.Vectors
     options:
       heading_level: 3
 
-::: completr.key_id
+::: typemind.key_id
     options:
       heading_level: 3
 
 ## Suggestions
 
-::: completr.Suggestion
+::: typemind.Suggestion
     options:
       heading_level: 3
 
-::: completr.AliasSuggestion
+::: typemind.AliasSuggestion
     options:
       heading_level: 3
 
-::: completr.HybridSuggestion
+::: typemind.HybridSuggestion
     options:
       heading_level: 3
 
-::: completr.MatchKind
+::: typemind.MatchKind
     options:
       heading_level: 3
 
-::: completr.FusionKind
+::: typemind.FusionKind
     options:
       heading_level: 3
 
 ## asyncio
 
-::: completr.AsyncDatabase
+::: typemind.AsyncDatabase
     options:
       heading_level: 3
 
-::: completr.AsyncDatabaseNamespace
+::: typemind.AsyncDatabaseNamespace
     options:
       heading_level: 3
 
-::: completr.AsyncEngine
+::: typemind.AsyncEngine
     options:
       heading_level: 3
 
 ## Errors
 
-Every error derives from `CompletrError`. `NotFoundError` is also a `LookupError`, `InvalidInputError` a
+Every error derives from `TypemindError`. `NotFoundError` is also a `LookupError`, `InvalidInputError` a
 `ValueError`, and `StorageError` an `OSError`. `NamespaceNotFoundError` and `LayerNotFoundError` are
 `NotFoundError`s that carry the missing `name` and the names that exist in `available`.
 
-::: completr.CompletrError
+::: typemind.TypemindError
     options:
       heading_level: 3
 
-::: completr.ConflictError
+::: typemind.ConflictError
     options:
       heading_level: 3
 
-::: completr.CorruptionError
+::: typemind.CorruptionError
     options:
       heading_level: 3
 
-::: completr.NotFoundError
+::: typemind.NotFoundError
     options:
       heading_level: 3
 
-::: completr.NamespaceNotFoundError
+::: typemind.NamespaceNotFoundError
     options:
       heading_level: 3
 
-::: completr.LayerNotFoundError
+::: typemind.LayerNotFoundError
     options:
       heading_level: 3
 
-::: completr.InvalidInputError
+::: typemind.InvalidInputError
     options:
       heading_level: 3
 
-::: completr.StorageError
+::: typemind.StorageError
     options:
       heading_level: 3
 
@@ -188,34 +188,34 @@ Every error derives from `CompletrError`. `NotFoundError` is also a `LookupError
 
 The [collections](../guides/collections.md) layer.
 
-::: completr.Client
+::: typemind.Client
     options:
       heading_level: 3
 
-::: completr.ClientNamespace
+::: typemind.ClientNamespace
     options:
       heading_level: 3
 
-::: completr.Collection
+::: typemind.Collection
     options:
       heading_level: 3
 
-::: completr.CollectionStats
+::: typemind.CollectionStats
     options:
       heading_level: 3
 
-::: completr.OptimizeKind
+::: typemind.OptimizeKind
     options:
       heading_level: 3
 
-::: completr.AsyncClient
+::: typemind.AsyncClient
     options:
       heading_level: 3
 
-::: completr.AsyncCollection
+::: typemind.AsyncCollection
     options:
       heading_level: 3
 
-::: completr.AsyncClientNamespace
+::: typemind.AsyncClientNamespace
     options:
       heading_level: 3

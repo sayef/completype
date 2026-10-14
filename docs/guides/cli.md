@@ -1,13 +1,13 @@
 # Command line
 
-The `completr` tool operates a database from a terminal or a cron job: import documents, try completions,
+The `typemind` tool operates a database from a terminal or a cron job: import documents, try completions,
 inspect versions, compact, clean up and run an ingestor.
 
 ```sh
-cargo install completr-cli
+cargo install typemind-cli
 ```
 
-Every command takes the database URL or path first, or reads it from `COMPLETR_URL`. The tool supports
+Every command takes the database URL or path first, or reads it from `TYPEMIND_URL`. The tool supports
 local paths, `s3://`, `gs://` and `az://` URLs. S3 credentials resolve through the standard AWS chain; the
 tool takes no storage options on the command line.
 
@@ -15,12 +15,12 @@ Commands that take an `<index>` take an index name. A [collection](collections.m
 each collection is stored as an index of the same name.
 
 ```sh
-completr s3://my-bucket/completions import songs songs.jsonl   # JSON Lines documents
-completr s3://my-bucket/completions complete songs "danc" --contexts pop
-completr s3://my-bucket/completions inspect                    # versions, indexes, sizes
-completr s3://my-bucket/completions compact songs
-completr s3://my-bucket/completions cleanup --keep-versions 10
-completr s3://my-bucket/completions ingest --interval 1         # run an ingestor
+typemind s3://my-bucket/completions import songs songs.jsonl   # JSON Lines documents
+typemind s3://my-bucket/completions complete songs "danc" --contexts pop
+typemind s3://my-bucket/completions inspect                    # versions, indexes, sizes
+typemind s3://my-bucket/completions compact songs
+typemind s3://my-bucket/completions cleanup --keep-versions 10
+typemind s3://my-bucket/completions ingest --interval 1         # run an ingestor
 ```
 
 ## Commands
@@ -32,7 +32,7 @@ completr s3://my-bucket/completions ingest --interval 1         # run an ingesto
 | `import <index> <file>` | Imports JSON Lines documents from a file, or `-` for stdin, in one commit. | `--overwrite` replaces the whole index. |
 | `compact <index>` | Compacts an index until nothing is due. | `--once` runs one step. |
 | `cleanup` | Deletes old versions, and segment files no retained version references. | `--keep-versions` (10), `--older-than-seconds` (3600) |
-| `ingest` | Runs an ingestor: commits submitted change sets while it holds the lease, until interrupted. | `--owner` (`completr-cli`), `--interval` seconds between rounds (1; 0 runs one round) |
+| `ingest` | Runs an ingestor: commits submitted change sets while it holds the lease, until interrupted. | `--owner` (`typemind-cli`), `--interval` seconds between rounds (1; 0 runs one round) |
 
 ## Importing documents
 
@@ -47,9 +47,9 @@ imported from the command line.
 ```
 
 ```console
-$ completr ./completions import songs songs.jsonl
+$ typemind ./completions import songs songs.jsonl
 imported 3 documents into songs as version 1
-$ completr ./completions complete songs danc
+$ typemind ./completions complete songs danc
 0.5469  prefix        dancing  Dancing Queen – ABBA
 0.4621  prefix        dark  Dancing in the Dark – Bruce Springsteen
 ```
@@ -63,20 +63,20 @@ hourly cleanup:
 
 ```sh
 # A long-running worker
-COMPLETR_URL=s3://my-bucket/completions completr ingest --owner worker-1 --interval 1
+TYPEMIND_URL=s3://my-bucket/completions typemind ingest --owner worker-1 --interval 1
 
 # crontab: clean up every hour
-0 * * * *  COMPLETR_URL=s3://my-bucket/completions completr cleanup --keep-versions 10
+0 * * * *  TYPEMIND_URL=s3://my-bucket/completions typemind cleanup --keep-versions 10
 ```
 
 ## Logging
 
-Engine events are written to stderr, at `info` level by default. Set `COMPLETR_LOG` to an
+Engine events are written to stderr, at `info` level by default. Set `TYPEMIND_LOG` to an
 [`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
 directive for more or less:
 
 ```sh
-COMPLETR_LOG=completr=debug completr ./completions import songs songs.jsonl
+TYPEMIND_LOG=typemind=debug typemind ./completions import songs songs.jsonl
 ```
 
 See [Observability](observability.md) for the events.
