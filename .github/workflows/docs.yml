@@ -45,4 +45,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Creates the project on the first deploy; later runs only report that it exists.
+          preCommands: wrangler pages project create typemind --production-branch=main || true
           command: pages deploy site --project-name=typemind --branch=main
