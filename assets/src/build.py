@@ -77,7 +77,9 @@ if __name__ == "__main__":
         mark, mark_w = wordmark(16, 92, 96, theme)
         tag, tag_w = text_path(MEDIUM, TAGLINE, 20, 140, 24)
         width = int(max(16 + mark_w, 20 + tag_w) + 16)
-        body = f'{mark}\n<path d="{tag}" fill="{THEMES[theme]["tagline"]}"/>'
+        # A background of its own keeps the banner legible where the page's theme differs from it.
+        back = PAPER if theme == "light" else INK
+        body = f'<rect width="{width}" height="164" rx="14" fill="{back}"/>\n{mark}\n<path d="{tag}" fill="{THEMES[theme]["tagline"]}"/>'
         (OUT / f"banner-{theme}.svg").write_text(svg(width, 164, body, f"completype: {TAGLINE.lower()}"))
 
         size, pad = 96, 6

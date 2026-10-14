@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="completype: serverless autocompletion for Rust and Python" src="assets/banner-light.svg" width="620">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mindyard/completype/main/assets/banner-dark.svg">
+    <img alt="completype: serverless autocompletion for Rust and Python" src="https://raw.githubusercontent.com/mindyard/completype/main/assets/banner-light.svg" width="620">
   </picture>
 </p>
 
@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
+  <img src="https://raw.githubusercontent.com/mindyard/completype/main/assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
 </p>
 
 completype is a **serverless autocompletion engine**. In the spirit of [LanceDB](https://github.com/lancedb/lancedb),
