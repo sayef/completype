@@ -1,6 +1,6 @@
 # Competitor benchmark
 
-This harness compares typemind with [Typesense](https://typesense.org), [Meilisearch](https://www.meilisearch.com)
+This harness compares completype with [Typesense](https://typesense.org), [Meilisearch](https://www.meilisearch.com)
 and [tantivy](https://github.com/quickwit-oss/tantivy) (through tantivy-py) as autocompletion engines. Every
 engine indexes the same documents and answers the same queries. The latest results are in
 [`docs/benchmarks.md`](../docs/benchmarks.md) and [`results/hn/results.md`](results/hn/results.md).
@@ -12,12 +12,12 @@ really sends and whether the wanted suggestion appears early.
 
 | Measurement | How |
 |---|---|
-| Indexing | Wall time to build the index from all documents. typemind writes segments under a 256 MB budget and compacts them into one inside the timed build; it is also measured with `build_threads=8`, with UUID strings as ids, and on Wikipedia with its segments left uncompacted (`--variant segments`) |
+| Indexing | Wall time to build the index from all documents. completype writes segments under a 256 MB budget and compacts them into one inside the timed build; it is also measured with `build_threads=8`, with UUID strings as ids, and on Wikipedia with its segments left uncompacted (`--variant segments`) |
 | Indexing memory | Peak memory while indexing, as the kernel records it since a reset just before the build: for in-process engines, of the build process above the loaded documents; for servers, of the server process |
-| Size | Bytes on disk of the index (typemind: its segment files; others: their data directory) |
+| Size | Bytes on disk of the index (completype: its segment files; others: their data directory) |
 | Memory | The physical footprint the OS charges. In-process engines: growth of a fresh process after opening the index and its first query, then after 5,000 prefix queries. Servers: the server process after indexing and after all queries |
-| Open or restart | typemind and tantivy: time to open the index and answer the first query. Servers: time from a restart to the first hit |
-| Latency | One client, limit 10, after a warm-up. In-process time for typemind and tantivy; round-trip time over localhost HTTP and the engine-reported time (`search_time_ms`, `processingTimeMs`) for the servers |
+| Open or restart | completype and tantivy: time to open the index and answer the first query. Servers: time from a restart to the first hit |
+| Latency | One client, limit 10, after a warm-up. In-process time for completype and tantivy; round-trip time over localhost HTTP and the engine-reported time (`search_time_ms`, `processingTimeMs`) for the servers |
 | Throughput | 8 closed-loop clients for 10 s on the prefix set: threads for in-process engines, processes for servers |
 | Quality | Each target title is typed one character at a time, and the target's rank in the top 10 is recorded after every keystroke |
 
@@ -110,7 +110,7 @@ else is tuned. All engines return 10 results.
 
 | Engine | Version | Settings |
 |---|---|---|
-| typemind | the installed package | One segment built with default options; `Index` with default options. Popularity is `log1p(points) / log1p(max points)` |
+| completype | the installed package | One segment built with default options; `Index` with default options. Popularity is `log1p(points) / log1p(max points)` |
 | tantivy | tantivy-py 0.26.2 | See below |
 | Typesense | 30.2 | `title` string and `score` int32 with `default_sorting_field: score`; search with `query_by=title` and the defaults for prefix search and typo tolerance |
 | Typesense, `buckets` | 30.2 | As above, plus `sort_by=_text_match(buckets: 10):desc,score:desc`, which gives points more weight |
@@ -119,7 +119,7 @@ else is tuned. All engines return 10 results.
 
 Typesense and Meilisearch run as local servers on 127.0.0.1 with their default configuration, from the
 official release binaries. Meilisearch checksums are the GitHub release asset digests; Typesense publishes
-none, so `fetch.py` pins the SHA-256 of the archives as downloaded on 2026-09-30. typemind and tantivy run in the benchmark process.
+none, so `fetch.py` pins the SHA-256 of the archives as downloaded on 2026-09-30. completype and tantivy run in the benchmark process.
 
 **tantivy autocomplete emulation.** tantivy is a search library without an autocomplete mode, so the adapter
 builds one: the `title` field uses the default tokenizer, every complete token must match as a term and
@@ -135,7 +135,7 @@ and macOS (arm64 or x86_64) or Linux (x86_64 or arm64).
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -r bench/requirements.txt   # or install a local typemind wheel instead of the PyPI one
+.venv/bin/pip install -r bench/requirements.txt   # or install a local completype wheel instead of the PyPI one
 PYTHON=.venv/bin/python bench/run.sh
 ```
 
@@ -146,9 +146,9 @@ runs every engine, writes `results/hn/<engine>.json` and renders `results/hn/res
 ```sh
 cd bench
 python fetch.py                                       # dataset and binaries
-python bench.py run typemind --throughput               # one engine
+python bench.py run completype --throughput               # one engine
 python bench.py run typesense --variant buckets       # a variant
-python bench.py scale typemind --sizes 25000,50000,124440   # nested subsets of growing size
+python bench.py scale completype --sizes 25000,50000,124440   # nested subsets of growing size
 python report.py
 ```
 
@@ -164,8 +164,8 @@ and warm prefix latency, then deletes that index data. Results go to `results/NA
 `memory limit` rather than dropped, and a scale run stops at the first size that fails. A server search
 with no answer within 30 s counts as finding nothing, and the run records how many there were.
 
-**typemind segments.** typemind indexes through a `SegmentWriter` with a memory budget of
-`BENCH_TYPEMIND_MEMORY_BUDGET_MB` (default 256, as tantivy's writer here): rows stream in from a generator,
+**completype segments.** completype indexes through a `SegmentWriter` with a memory budget of
+`BENCH_COMPLETYPE_MEMORY_BUDGET_MB` (default 256, as tantivy's writer here): rows stream in from a generator,
 and the writer starts a new segment file whenever building more would pass the budget. An index of several
 segments ranks exactly like one. HN fits in a single segment.
 
@@ -174,7 +174,7 @@ timings. Servers are stopped at the end of each run; the index data stays in `be
 
 ## Caveats
 
-- **In-process against network.** typemind and tantivy run in the benchmark process, whereas Typesense and
+- **In-process against network.** completype and tantivy run in the benchmark process, whereas Typesense and
   Meilisearch answer over HTTP on localhost. Round trips add about 1 ms, which favours the in-process
   engines. The engine-reported times of the servers exclude it, but Typesense and Meilisearch report whole
   milliseconds only.

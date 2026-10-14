@@ -2,7 +2,7 @@
 import argparse, json, os
 from common import results_dir
 
-ORDER = ["typemind", "typemind-segments", "tantivy", "typesense", "typesense-buckets", "meilisearch",
+ORDER = ["completype", "completype-segments", "tantivy", "typesense", "typesense-buckets", "meilisearch",
          "meilisearch-popfirst"]
 QUALITY_COLS = ["mrr_over_prefixes"] + [f"s@{k}_len{L}" for L in (3, 5, 8) for k in (1, 5, 10)] + \
                ["reached_top1", "keystrokes_top1", "reached_top5", "keystrokes_top5", "chars_saved_top5"]
@@ -17,12 +17,12 @@ def secs(s):
 
 
 def label(n, r):
-    """typemind's rows say whether its segments were compacted."""
+    """completype's rows say whether its segments were compacted."""
     b = r.get("build", {})
-    if n == "typemind":
-        return "typemind, compacted"
-    if n == "typemind-segments":
-        return f"typemind, {b.get('segments', '?')} segments"
+    if n == "completype":
+        return "completype, compacted"
+    if n == "completype-segments":
+        return f"completype, {b.get('segments', '?')} segments"
     return n
 
 
@@ -51,11 +51,11 @@ def render(res):
             m0, m1 = r["rss_after_index_bytes"], r["rss_after_queries_bytes"]
         row(label(n, r), r["version"], secs(b["index_s"]), mb(b.get("build_rss_bytes", b.get("peak_rss_bytes"))),
             mb(b["disk_bytes"]), mb(m0), mb(m1), secs(r.get("restart_to_first_hit_s", r.get("open_s"))))
-    c = res.get("typemind", {})
+    c = res.get("completype", {})
     if "build_8_threads" in c:
-        out.append(f"\ntypemind with build_threads=8: {secs(c['build_8_threads']['index_s'])}.")
+        out.append(f"\ncompletype with build_threads=8: {secs(c['build_8_threads']['index_s'])}.")
     if c.get("build_uuid", {}).get("status") == "ok":
-        out.append(f"typemind with UUID string ids: {mb(c['build_uuid']['disk_bytes'])} on disk, "
+        out.append(f"completype with UUID string ids: {mb(c['build_uuid']['disk_bytes'])} on disk, "
                    f"{secs(c['build_uuid']['index_s'])} to index.")
     out.append("\nIn-process engines: RSS growth of a fresh process after opening, then after 5,000 prefix queries; "
                "peak memory while indexing is the build process's peak RSS above the loaded documents. "

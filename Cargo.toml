@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/typemind", "crates/typemind-cli", "crates/typemind-py"]
+members = ["crates/completype", "crates/completype-cli", "crates/completype-py"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,8 +8,8 @@ edition = "2021"
 rust-version = "1.94.1"
 license = "MIT"
 authors = ["Saiful Islam"]
-repository = "https://github.com/mindyard/typemind"
-homepage = "https://github.com/mindyard/typemind"
+repository = "https://github.com/mindyard/completype"
+homepage = "https://github.com/mindyard/completype"
 
 [profile.release]
 lto = "thin"

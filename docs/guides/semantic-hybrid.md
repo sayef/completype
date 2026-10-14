@@ -1,9 +1,9 @@
 # Semantic and hybrid completion
 
-Documents can carry embeddings from any model. typemind does not include an embedding model: you compute
+Documents can carry embeddings from any model. completype does not include an embedding model: you compute
 vectors with the model of your choice, when you add documents and when you query.
 
-typemind quantises embeddings with [TurboQuant](https://crates.io/crates/turbovec), 4 bits per dimension by
+completype quantises embeddings with [TurboQuant](https://crates.io/crates/turbovec), 4 bits per dimension by
 default (2 or 3 optional), and searches them with deleted and filtered-out documents masked out.
 
 ## Adding embeddings
@@ -17,7 +17,7 @@ import zlib
 
 import numpy as np
 
-from typemind import Index
+from completype import Index
 
 docs = [
     {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -81,7 +81,7 @@ either of which is `None` when the document came from one side only.
 === "Rust"
 
     ```rust
-    use typemind::{Fusion, HybridOptions};
+    use completype::{Fusion, HybridOptions};
 
     let query_vector: Vec<f32> = embed("dancing q");   // your model
     let options = HybridOptions::default().fusion(Fusion::ReciprocalRank { k: 60.0 });

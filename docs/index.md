@@ -1,5 +1,5 @@
 ---
-title: typemind
+title: completype
 hide:
   - navigation
   - toc
@@ -22,12 +22,12 @@ hide:
     together, and answers in a fraction of a millisecond.</p>
     <div class="cp-actions">
       <a class="md-button md-button--primary" href="getting-started/">Get started</a>
-      <a class="md-button" href="https://github.com/mindyard/typemind">GitHub</a>
+      <a class="md-button" href="https://github.com/mindyard/completype">GitHub</a>
     </div>
-    <code class="cp-install">pip install typemind</code>
+    <code class="cp-install">pip install completype</code>
   </div>
   <div class="cp-hero__demo">
-    <img src="assets/demo.svg" alt="typemind completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="720" height="380">
+    <img src="assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="720" height="380">
   </div>
 </section>
 
@@ -101,20 +101,20 @@ hide:
 === "Python"
 
     ```sh
-    pip install typemind
+    pip install completype
     ```
 
 === "Rust"
 
     ```sh
-    cargo add typemind --features store    # databases on local disk and in memory
+    cargo add completype --features store    # databases on local disk and in memory
     cargo add tokio --features macros,rt-multi-thread
     ```
 
 === "Command line"
 
     ```sh
-    cargo install typemind-cli
+    cargo install completype-cli
     ```
 
 ## Quick start
@@ -122,8 +122,8 @@ hide:
 === "Python"
 
     ```python
-    import typemind
-    from typemind import Index
+    import completype
+    from completype import Index
 
     docs = [
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -135,7 +135,7 @@ hide:
     for query in ["danc", "RHCP", "bohemain rapsody", "queen"]:
         print(query, [(s.text, s.kind) for s in index.complete(query, limit=3)])
 
-    db = typemind.connect("./data")   # or "s3://bucket/prefix", "gs://...", "az://..."
+    db = completype.connect("./data")   # or "s3://bucket/prefix", "gs://...", "az://..."
     txn = db.begin()
     txn.append("songs", docs)
     txn.commit()
@@ -147,7 +147,7 @@ hide:
 
     ```rust
     use std::{sync::Arc, time::Duration};
-    use typemind::{Database, Document, Engine, Index, IndexOptions, Replica};
+    use completype::{Database, Document, Engine, Index, IndexOptions, Replica};
 
     let docs = || [
         Document::keyed("bohemian", "Bohemian Rhapsody – Queen", 0.95),

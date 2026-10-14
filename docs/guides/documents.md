@@ -1,7 +1,7 @@
 # Documents
 
 A document is one completion target: an id, one text, a popularity weight, and optional aliases, context
-tags and an embedding. typemind does not have multi-field schemas. Documents go into segments, through
+tags and an embedding. completype does not have multi-field schemas. Documents go into segments, through
 `Index.from_documents`, a transaction, `Segment.build` or a `SegmentWriter`.
 
 ## Fields
@@ -21,8 +21,8 @@ Only `id` and `text` are required.
 === "Python"
 
     ```python
-    import typemind
-    from typemind import Index
+    import completype
+    from completype import Index
 
     docs = [
         {
@@ -42,7 +42,7 @@ Only `id` and `text` are required.
 === "Rust"
 
     ```rust
-    use typemind::{Document, Index};
+    use completype::{Document, Index};
 
     let index = Index::from_documents([
         Document::keyed("bridge", "Under the Bridge – Red Hot Chili Peppers", 0.75)
@@ -69,7 +69,7 @@ ignoring ids that are not present. A repeated id within one call keeps its last 
 `overwrite(index, documents)` replaces the whole index.
 
 ```python
-db = typemind.connect("./data")
+db = completype.connect("./data")
 txn = db.begin()
 txn.append("songs", docs)
 txn.commit()
@@ -102,7 +102,7 @@ A string id is hashed with `key_id` to a 64-bit id. The segment stores the strin
 return it, so you rarely need the number. `deletes` and `get` accept the same string.
 
 ```python
-print(typemind.key_id("bridge"))        # the stable 64-bit id behind "bridge"
+print(completype.key_id("bridge"))        # the stable 64-bit id behind "bridge"
 print(index.complete("under")[0].id)    # 'bridge', as given
 ```
 
@@ -128,7 +128,7 @@ to the numeric `id`. Deletes take numeric ids, so pass `key_id("bridge")` for ke
 === "Document"
 
     ```python
-    from typemind import Document
+    from completype import Document
 
     index = Index.from_documents([Document("bohemian", "Bohemian Rhapsody – Queen", 0.95, synonyms=["is this the real life"])])
     ```
@@ -162,7 +162,7 @@ to the numeric `id`. Deletes take numeric ids, so pass `key_id("bridge")` for ke
 
 Table columns use the field names above. List columns (`synonyms`, `abbreviations`, `contexts`) may hold
 nulls or `NaN`, which count as empty. The tables are converted row by row, so pandas, polars and pyarrow
-are optional dependencies that typemind does not install.
+are optional dependencies that completype does not install.
 
 `Document` objects expose the fields as read-only properties, and `to_dict()` returns the dict form:
 
@@ -204,7 +204,7 @@ Unknown fields raise `InvalidInputError` (a `ValueError`), so a typo never silen
 applies to table columns.
 
 ```python
-from typemind import InvalidInputError
+from completype import InvalidInputError
 
 try:
     Index.from_documents([{"id": "billie", "text": "Billie Jean – Michael Jackson", "popularty": 0.9}])
@@ -226,7 +226,7 @@ compacted segment.
 === "Python"
 
     ```python
-    from typemind import Segment
+    from completype import Segment
 
     catalogue = [
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -247,7 +247,7 @@ compacted segment.
 
     ```rust
     use std::sync::Arc;
-    use typemind::{key_id, Document, Index, IndexOptions, Segment};
+    use completype::{key_id, Document, Index, IndexOptions, Segment};
 
     let base = Segment::build(catalogue, [])?;
     let delta = Segment::build(
@@ -281,7 +281,7 @@ and the segments rank exactly like one. Of several documents with one id, the la
 === "Python"
 
     ```python
-    from typemind import SegmentWriter
+    from completype import SegmentWriter
 
     writer = SegmentWriter("segments", memory_budget=1_000_000)
     writer.add([{"id": f"s{i}", "text": f"song {i}"} for i in range(20_000)])
@@ -295,7 +295,7 @@ and the segments rank exactly like one. Of several documents with one id, the la
 
     ```rust
     use std::sync::Arc;
-    use typemind::{BuildOptions, Document, Index, IndexOptions, SegmentWriter};
+    use completype::{BuildOptions, Document, Index, IndexOptions, SegmentWriter};
 
     let mut writer = SegmentWriter::new(BuildOptions::default(), "segments")?.memory_budget(1 << 20);
     for i in 0..20_000 {

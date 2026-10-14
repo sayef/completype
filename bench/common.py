@@ -195,7 +195,7 @@ def load_docs(full=False):
 
 
 def weight(score, max_score):
-    """Popularity in [0, 1] for typemind: log-scaled points."""
+    """Popularity in [0, 1] for completype: log-scaled points."""
     return math.log1p(score) / math.log1p(max_score)
 
 

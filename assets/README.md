@@ -8,7 +8,7 @@
 | `social-preview.svg`, `social-preview.png` | 1280 × 640 repository preview for GitHub and link cards |
 | `demo.svg` | Animated demo of real completions |
 
-The wordmark is `type` in ink (`#111113`, or paper `#F6F5F1` on dark), then `mind` and a square full stop in
+The wordmark is `comple` in ink (`#111113`, or paper `#F6F5F1` on dark), then `type` and a square full stop in
 orange (`#F25C05`). Use the orange for that and little else; links on light backgrounds take the darker
 `#C2410C`, which reads at body size. Text is converted to outlines from
 [Space Grotesk](https://github.com/floriankarsten/space-grotesk) (the name) and

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes how typemind stores, searches and updates indexes. typemind is serverless: the engine
+This document describes how completype stores, searches and updates indexes. completype is serverless: the engine
 runs inside each application process, and the only shared component is the store. For usage, see
 [Getting started](getting-started.md) and the guides.
 
@@ -23,7 +23,7 @@ A segment is one file. Every section is 8-byte aligned and read in place from a 
 segment involves no parsing or copying beyond a few structural checks.
 
 ```
-magic "TYPEMIND\0\0" | version | settings | layout | max score
+magic "COMPLETYPE\0\0" | version | settings | layout | max score
 ids (sorted, blocked) | weights | text shapes (length, single word; bit-packed) | deletes
 document store     zstd blocks of 128 documents' aliases and contexts, with block offsets
 texts              original texts, read in place for suggestions
@@ -64,7 +64,7 @@ xxh3 checksum of everything above
 
 ### Dictionaries
 
-typemind fixes the dictionary per key set (`Layout`, recorded in the segment) instead of making it a user
+completype fixes the dictionary per key set (`Layout`, recorded in the segment) instead of making it a user
 option:
 
 | Key set | Dictionary | Why |

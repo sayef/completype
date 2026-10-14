@@ -1,11 +1,11 @@
 # Configuration
 
-typemind's defaults suit most autocompletion workloads. This page lists every setting, where it is passed,
+completype's defaults suit most autocompletion workloads. This page lists every setting, where it is passed,
 and its default.
 
 ## Database options
 
-Passed to `typemind.connect(url, ...)`, `typemind.Database(url, ...)` and `typemind.AsyncDatabase(url, ...)`.
+Passed to `completype.connect(url, ...)`, `completype.Database(url, ...)` and `completype.AsyncDatabase(url, ...)`.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -85,9 +85,9 @@ Passed to: `Index(...)`, `Index.from_documents` (`max_score`, `popularity_weight
 ## Example
 
 ```python
-import typemind
+import completype
 
-db = typemind.connect("./data", vector_bits=3, build_threads=0)
+db = completype.connect("./data", vector_bits=3, build_threads=0)
 txn = db.begin()
 txn.append("songs", [{"id": "billie", "text": "Billie Jean – Michael Jackson", "popularity": 0.9}])
 txn.commit()
@@ -110,7 +110,7 @@ expose the same settings through chainable setters named after the fields:
 
 ```rust
 use std::time::Duration;
-use typemind::{BuildOptions, CleanupPolicy, CompactionPolicy, IndexOptions, SearchOptions};
+use completype::{BuildOptions, CleanupPolicy, CompactionPolicy, IndexOptions, SearchOptions};
 
 let build = BuildOptions::default().vector_bits(3).build_threads(0);
 let index = IndexOptions::default().max_score(742.0).popularity_weight(0.6);
@@ -132,7 +132,7 @@ The [collections](collections.md) layer has settings of its own.
 
 ### Client options
 
-Passed to `typemind.Client(url, ...)` and `typemind.AsyncClient(url, ...)`, together with the
+Passed to `completype.Client(url, ...)` and `completype.AsyncClient(url, ...)`, together with the
 [build options](#build-options).
 
 | Setting | Default | Meaning |
@@ -171,7 +171,7 @@ Passed to `collection.complete(query, ...)`.
 | `vector` | `None` | An embedding of the query, fused with the text results by reciprocal rank. |
 
 ```python
-client = typemind.Client("./data", sync_every=2.0)
+client = completype.Client("./data", sync_every=2.0)
 songs = client.get_or_create_collection("songs", fanout=8, min_interval=60.0)
 print(songs.complete("bi", limit=5, aliases=True))
 ```
@@ -185,11 +185,11 @@ an enum. `ConnectOptions` also takes `IndexOptions`, which Python's `Client` doe
 
 ```rust
 use std::time::Duration;
-use typemind::{BuildOptions, CompactionPolicy, ConnectOptions, IndexOptions, Optimize, Query};
+use completype::{BuildOptions, CompactionPolicy, ConnectOptions, IndexOptions, Optimize, Query};
 
 let options = ConnectOptions::default()
     .sync_every(Some(Duration::from_secs(2)))
-    .cache_dir(Some("/var/cache/typemind".into()))
+    .cache_dir(Some("/var/cache/completype".into()))
     .storage(vec![("aws_region".to_owned(), "eu-central-1".to_owned())])
     .build(BuildOptions::default().vector_bits(3).build_threads(0))
     .index(IndexOptions::default().popularity_weight(0.6));

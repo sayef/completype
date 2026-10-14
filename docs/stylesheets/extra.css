@@ -2,13 +2,13 @@
 
 /* Ink and paper, with the wordmark's orange as the one accent. */
 :root {
-  --typemind-ink: #111113;
-  --typemind-paper: #f6f5f1;
-  --typemind-orange: #f25c05;
+  --completype-ink: #111113;
+  --completype-paper: #f6f5f1;
+  --completype-orange: #f25c05;
 }
 
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: var(--typemind-ink);
+  --md-primary-fg-color: var(--completype-ink);
   --md-primary-fg-color--light: #2a2a2e;
   --md-primary-fg-color--dark: #000000;
   --md-accent-fg-color: #c2410c;
@@ -18,7 +18,7 @@
 }
 
 [data-md-color-scheme="slate"] {
-  --md-primary-fg-color: var(--typemind-ink);
+  --md-primary-fg-color: var(--completype-ink);
   --md-primary-fg-color--light: #2a2a2e;
   --md-primary-fg-color--dark: #000000;
   --md-accent-fg-color: #ff8a4c;
@@ -30,7 +30,7 @@
 
 .md-header,
 .md-tabs {
-  background: var(--typemind-ink);
+  background: var(--completype-ink);
 }
 
 /* The wordmark stands in for the site name. */
@@ -77,7 +77,7 @@
 }
 
 .cp-dot {
-  color: var(--typemind-orange);
+  color: var(--completype-orange);
 }
 
 .md-typeset .cp-lede {
@@ -101,8 +101,8 @@
 }
 
 .md-typeset .cp-actions .md-button--primary:hover {
-  background-color: var(--typemind-orange);
-  border-color: var(--typemind-orange);
+  background-color: var(--completype-orange);
+  border-color: var(--completype-orange);
   color: #ffffff;
 }
 

@@ -1,17 +1,17 @@
 # FastAPI example
 
-A completion API over a typemind database. The app opens the database once with `typemind.connect`, takes
+A completion API over a completype database. The app opens the database once with `completype.connect`, takes
 an engine from it with `db.engine(sync_every=...)`, and serves `GET /complete` from one index. The engine
-loads new versions by itself in a background thread every `TYPEMIND_SYNC_SECONDS`, so updates appear
+loads new versions by itself in a background thread every `COMPLETYPE_SYNC_SECONDS`, so updates appear
 without a restart and without a sync loop.
 
 ```sh
 pip install -r requirements.txt
 
-# Load some documents (or use `typemind ./completions import songs songs.jsonl`).
+# Load some documents (or use `completype ./completions import songs songs.jsonl`).
 python -c '
-import typemind
-db = typemind.connect("./completions")
+import completype
+db = completype.connect("./completions")
 txn = db.begin()
 txn.append("songs", [
     {"id": "dancing", "text": "Dancing Queen – ABBA", "popularity": 0.85, "contexts": ["pop", "disco"]},
@@ -20,7 +20,7 @@ txn.append("songs", [
 txn.commit()
 '
 
-TYPEMIND_URL=./completions uvicorn app:app
+COMPLETYPE_URL=./completions uvicorn app:app
 curl 'http://127.0.0.1:8000/complete?q=danc&limit=5'
 ```
 
@@ -33,10 +33,10 @@ curl 'http://127.0.0.1:8000/complete?q=danc&limit=5'
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TYPEMIND_URL` | `./completions` | Database URL: a local path, `s3://`, `gs://` or `az://`. |
-| `TYPEMIND_INDEX` | `songs` | Index to complete from. |
-| `TYPEMIND_CACHE_DIR` | none | Local directory for downloaded segments. |
-| `TYPEMIND_SYNC_SECONDS` | `5` | Seconds between background syncs. |
+| `COMPLETYPE_URL` | `./completions` | Database URL: a local path, `s3://`, `gs://` or `az://`. |
+| `COMPLETYPE_INDEX` | `songs` | Index to complete from. |
+| `COMPLETYPE_CACHE_DIR` | none | Local directory for downloaded segments. |
+| `COMPLETYPE_SYNC_SECONDS` | `5` | Seconds between background syncs. |
 
 `/complete` takes `q`, `limit` (1 to 50) and repeated `contexts` parameters. `/health` returns the version
 the engine serves and its last background sync (`synced_at`, `error`).
@@ -47,5 +47,5 @@ API processes.
 
 The engine is opened at import time. Each uvicorn worker imports the app on its own, so each has its own
 engine. With a server that imports the app and then forks workers (gunicorn's `--preload`), open the
-database in each worker instead, because typemind's runtime does not survive `fork()`. See the
-[serverless deployment guide](https://typemind.pages.dev/guides/serverless/).
+database in each worker instead, because completype's runtime does not survive `fork()`. See the
+[serverless deployment guide](https://completype.pages.dev/guides/serverless/).

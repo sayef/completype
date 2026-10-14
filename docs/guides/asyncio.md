@@ -1,23 +1,23 @@
 # asyncio
 
-`typemind.AsyncDatabase` is a `Database` whose storage calls are awaitable, for FastAPI and other asyncio
+`completype.AsyncDatabase` is a `Database` whose storage calls are awaitable, for FastAPI and other asyncio
 services. It has the same methods as `Database`, awaited. Storage calls run in worker threads through
 `asyncio.to_thread`, so they never block the event loop. Completions stay synchronous: they take well
 under a millisecond and release the GIL.
 
 ## Serving
 
-`AsyncDatabase(url, ...)` takes the same arguments as `typemind.connect`. Constructing it does not block:
+`AsyncDatabase(url, ...)` takes the same arguments as `completype.connect`. Constructing it does not block:
 storage opens on the first awaited call, or on `await db.open()`.
 
 ```python
 import asyncio
 
-import typemind
+import completype
 
 
 async def main():
-    db = typemind.AsyncDatabase("./data")   # or "s3://my-bucket/completions"
+    db = completype.AsyncDatabase("./data")   # or "s3://my-bucket/completions"
     txn = await db.begin()
     txn.append("songs", [{"id": "billie", "text": "Billie Jean – Michael Jackson", "popularity": 0.9}])
     await db.commit(txn)
@@ -57,17 +57,17 @@ event loop for large batches: wrap them in `asyncio.to_thread`, or run bulk load
 `ChangeSet.upsert` only collects documents; `await db.submit(changes)` builds and writes them in a worker
 thread. To run an ingestor under asyncio, see [Many writers](writers.md#under-asyncio).
 
-The [FastAPI example](https://github.com/mindyard/typemind/tree/main/examples/fastapi) opens a database and
+The [FastAPI example](https://github.com/mindyard/completype/tree/main/examples/fastapi) opens a database and
 an engine once at import time, and serves `/complete` from the engine with synchronous handlers.
 
 ## Collections
 
-`typemind.AsyncClient(url, ...)` is the asyncio form of a [collections](collections.md) client. It takes
-the same arguments as `typemind.Client`, and also opens storage on the first awaited call.
+`completype.AsyncClient(url, ...)` is the asyncio form of a [collections](collections.md) client. It takes
+the same arguments as `completype.Client`, and also opens storage on the first awaited call.
 
 ```python
 async def collections():
-    client = typemind.AsyncClient("./data")
+    client = completype.AsyncClient("./data")
     songs = await client.get_or_create_collection("songs")
     await songs.add([{"id": "bad", "text": "Bad Guy – Billie Eilish", "popularity": 0.75}])
     print([s.text for s in songs.complete("billie")])

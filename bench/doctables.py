@@ -5,7 +5,7 @@ import json, pathlib, re, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 DOC = ROOT.parent / "docs" / "benchmarks.md"
-NAMES = [("typemind", "typemind"), ("typemind-segments", None), ("tantivy", "tantivy"), ("typesense", "Typesense"),
+NAMES = [("completype", "completype"), ("completype-segments", None), ("tantivy", "tantivy"), ("typesense", "Typesense"),
          ("typesense-buckets", "Typesense, buckets"), ("meilisearch", "Meilisearch"),
          ("meilisearch-popfirst", "Meilisearch, popfirst")]
 SETS = [("prefix", "Prefixes as typed"), ("typo1", "One-edit typos"), ("typo2", "Two-edit typos"),
@@ -45,7 +45,7 @@ def tables(workload):
     res = {k: json.loads((d / f"{k}.json").read_text()) for k, _ in NAMES if (d / f"{k}.json").exists()}
     # An engine that did not finish its build is left out; the text says why.
     res = {k: r for k, r in res.items() if r["build"].get("status") == "ok"}
-    names = [(k, label or f"typemind, {res[k]['build']['segments']} segments, not compacted")
+    names = [(k, label or f"completype, {res[k]['build']['segments']} segments, not compacted")
              for k, label in NAMES if k in res]
     rows = [res[k] for k, _ in names]
     out = {}
@@ -56,14 +56,14 @@ def tables(workload):
     m0 = column([memory(r)[0] for r in rows], mb)
     m1 = column([memory(r)[1] for r in rows], mb)
     op = column([r.get("restart_to_first_hit_s", r.get("open_s")) for r in rows], short)
-    c = res["typemind"]
+    c = res["completype"]
     lines = ["| Engine | Index time | Peak memory while indexing | On disk | Memory after open or index "
              "| Memory after queries | Open or restart to first hit |", "|---|---|---|---|---|---|---|"]
     lines += [f"| {n} | {idx[i]} | {peak[i]} | {disk[i]} | {m0[i]} | {m1[i]} | {op[i]} |"
               for i, (_, n) in enumerate(names)]
     notes = []
     if c["build"].get("segments_written", 1) > 1:
-        notes.append(f"typemind's index time covers writing {c['build']['segments_written']} segments "
+        notes.append(f"completype's index time covers writing {c['build']['segments_written']} segments "
                      f"({secs(c['build']['segments_written_s'])}) and compacting them into one.")
     if c.get("build_8_threads", {}).get("status") == "ok":
         notes.append(f"With 8 build threads, it takes {secs(c['build_8_threads']['index_s'])}.")
@@ -107,7 +107,7 @@ def tables(workload):
     out["throughput"] = ["| Engine | Queries per second |", "|---|---|"] + \
         [f"| {n} | {qps[j]} |" for j, (_, n) in enumerate(with_tp)]
 
-    labelled = [(n, r["labelled"]) for (k, n), r in zip(names, rows) if "labelled" in r and k != "typemind-segments"]
+    labelled = [(n, r["labelled"]) for (k, n), r in zip(names, rows) if "labelled" in r and k != "completype-segments"]
     if labelled:
         cols = {m: column([l[m] for _, l in labelled], lambda v: f"{v:.3f}", lower=False)
                 for m in ("s@1", "s@10", "mrr@10")}
@@ -120,7 +120,7 @@ def tables(workload):
         lines = ["| Engine | MRR | S@1, 3 chars | S@1, 5 chars | S@5, 5 chars | S@1, 8 chars | Keystrokes to top 5 "
                  "| MRR, typo | S@1, 5 chars, typo | S@1, 8 chars, typo | Reached top 1, typo |", "|" + "---|" * 11]
         # Segments rank exactly like their compaction, so the uncompacted row is left out.
-        ranked = [(i, n) for i, (k, n) in enumerate(names) if k != "typemind-segments"]
+        ranked = [(i, n) for i, (k, n) in enumerate(names) if k != "completype-segments"]
         cols = [column([rows[i]["quality"][target][kind][key] for i, _ in ranked],
                        (lambda p: lambda v: f"{v:.{p}f}")(places), lower=key == "keystrokes_top5")
                 for kind, key, places in QUALITY]

@@ -2,17 +2,17 @@
 
 ## What does "serverless" mean here?
 
-The same as for [LanceDB](https://github.com/lancedb/lancedb): there is no typemind server. The engine is a
+The same as for [LanceDB](https://github.com/lancedb/lancedb): there is no completype server. The engine is a
 library in your process, and the database is a set of files in a bucket or directory. Your application is
-still deployed however you like, on containers, VMs or functions; typemind adds no extra service to it.
+still deployed however you like, on containers, VMs or functions; completype adds no extra service to it.
 
-## How does typemind differ from Elasticsearch, OpenSearch, Typesense or Meilisearch?
+## How does completype differ from Elasticsearch, OpenSearch, Typesense or Meilisearch?
 
 Those are search servers for documents with many fields, filters and facets: you run and scale a cluster,
-and every query crosses the network. typemind is serverless and does autocompletion only: it runs inside
+and every query crosses the network. completype is serverless and does autocompletion only: it runs inside
 your process, and ranks the match kinds a completion box needs (abbreviations, spelling correction, word
 decomposition) together with popularity. Many applications use both: a search server for the results
-page, typemind for the box.
+page, completype for the box.
 
 ## How do several writers avoid conflicts without a server?
 
@@ -25,7 +25,7 @@ commit.
 ## How does it differ from an FST or trie library?
 
 [`fst`](https://crates.io/crates/fst) and [marisa-trie](https://github.com/s-yata/marisa-trie) are
-excellent key dictionaries, and typemind uses the same ideas internally. On top of them it adds scoring,
+excellent key dictionaries, and completype uses the same ideas internally. On top of them it adds scoring,
 typo tolerance, abbreviations, semantic search, updates without rebuilding, and storage.
 
 ## Which languages does it support?
@@ -48,20 +48,20 @@ ingestor takes to commit it: with one-second rounds, about a second more.
 
 ## Is the on-disk format stable?
 
-typemind is young. The format is versioned and checked on load, but it and the API may still change before
+completype is young. The format is versioned and checked on load, but it and the API may still change before
 1.0. Segments of an older format are rejected rather than misread, and must be rebuilt.
 
 ## Why the name?
 
-*typemind* is said "completer": it completes what people type, and the missing vowel is a nod to
+*completype* is said "completer": it completes what people type, and the missing vowel is a nod to
 search-engine names such as Solr. Its wordmark shows the name being completed as you type it.
 
 ## Non-features
 
-typemind does one job. It deliberately does not include:
+completype does one job. It deliberately does not include:
 
 - a server or HTTP API; it is serverless by design, so expose it through your own API if you need one (see
-  the [FastAPI example](https://github.com/mindyard/typemind/tree/main/examples/fastapi));
+  the [FastAPI example](https://github.com/mindyard/completype/tree/main/examples/fastapi));
 - full-text search over long documents, filtering beyond [contexts](guides/completion.md#contexts), or
   faceting;
 - multi-field schemas; each document has one text, plus aliases and an optional embedding;

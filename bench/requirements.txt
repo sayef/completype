@@ -1,4 +1,4 @@
-typemind
+completype
 tantivy==0.26.2
 requests
 psutil

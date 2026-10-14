@@ -3,7 +3,7 @@ requires = ["maturin>=1.8,<2"]
 build-backend = "maturin"
 
 [project]
-name = "typemind"
+name = "completype"
 description = "Serverless autocompletion engine for Rust and Python: exact, prefix, infix, abbreviation, spelling-tolerant, word-decomposing and semantic completions from object storage"
 readme = "README.md"
 license = "MIT"
@@ -26,13 +26,13 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/mindyard/typemind"
-Documentation = "https://github.com/mindyard/typemind#readme"
-Changelog = "https://github.com/mindyard/typemind/blob/main/CHANGELOG.md"
-Issues = "https://github.com/mindyard/typemind/issues"
+Homepage = "https://github.com/mindyard/completype"
+Documentation = "https://github.com/mindyard/completype#readme"
+Changelog = "https://github.com/mindyard/completype/blob/main/CHANGELOG.md"
+Issues = "https://github.com/mindyard/completype/issues"
 
 [tool.maturin]
-manifest-path = "crates/typemind-py/Cargo.toml"
-python-source = "crates/typemind-py/python"
-module-name = "typemind.typemind"
+manifest-path = "crates/completype-py/Cargo.toml"
+python-source = "crates/completype-py/python"
+module-name = "completype.completype"
 features = ["pyo3/extension-module"]

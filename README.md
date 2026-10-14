@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="typemind: serverless autocompletion for Rust and Python" src="assets/banner-light.svg" width="620">
+    <img alt="completype: serverless autocompletion for Rust and Python" src="assets/banner-light.svg" width="620">
   </picture>
 </p>
 
@@ -13,35 +13,32 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="https://typemind.pages.dev/">Docs</a> ·
-  <a href="https://docs.rs/typemind">Rust docs</a> ·
-  <a href="https://typemind.pages.dev/reference/python/">Python API</a> ·
+  <a href="https://completype.pages.dev/">Docs</a> ·
+  <a href="https://docs.rs/completype">Rust docs</a> ·
+  <a href="https://completype.pages.dev/reference/python/">Python API</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/mindyard/typemind/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mindyard/typemind/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://crates.io/crates/typemind"><img alt="crates.io" src="https://img.shields.io/crates/v/typemind.svg"></a>
-  <a href="https://docs.rs/typemind"><img alt="docs.rs" src="https://img.shields.io/docsrs/typemind"></a>
-  <a href="https://pypi.org/project/typemind/"><img alt="PyPI" src="https://img.shields.io/pypi/v/typemind.svg"></a>
+  <a href="https://github.com/mindyard/completype/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mindyard/completype/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://crates.io/crates/completype"><img alt="crates.io" src="https://img.shields.io/crates/v/completype.svg"></a>
+  <a href="https://docs.rs/completype"><img alt="docs.rs" src="https://img.shields.io/docsrs/completype"></a>
+  <a href="https://pypi.org/project/completype/"><img alt="PyPI" src="https://img.shields.io/pypi/v/completype.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
 </p>
 
 <p align="center">
-  <img src="assets/demo.svg" alt="typemind completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
+  <img src="assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
 </p>
 
-typemind is a **serverless autocompletion engine**. In the spirit of [LanceDB](https://github.com/lancedb/lancedb),
+completype is a **serverless autocompletion engine**. In the spirit of [LanceDB](https://github.com/lancedb/lancedb),
 it is a library, not a service: your application embeds it (Rust, or Python through first-class bindings),
 and an object-store bucket or a local directory is the database. There is no cluster to deploy, scale,
 upgrade or keep alive. Every process that serves completions reads the index straight from storage, and
 writers coordinate through the storage itself.
-
-Despite the name, typemind runs no language model. It is a deterministic index: the same data and query
-always give the same results, and semantic completion uses embeddings you supply.
 
 You give it documents (an id, a text, a popularity weight, and optionally aliases and an embedding), and it
 completes what your users type: every kind of match an autocomplete box needs, ranked together, and kept
@@ -71,11 +68,11 @@ flowchart LR
         M["_versions/ manifests"]
         S["segments/ immutable files"]
     end
-    M -- "new versions" --> F1["Your app + typemind<br/>engine.complete(...)"]
+    M -- "new versions" --> F1["Your app + completype<br/>engine.complete(...)"]
     S -- "changed segments" --> F1
-    M --> F2["Your app + typemind"]
+    M --> F2["Your app + completype"]
     S --> F2
-    M --> F3["Your app + typemind"]
+    M --> F3["Your app + completype"]
     S --> F3
 ```
 
@@ -121,7 +118,7 @@ flowchart LR
 - **Compact index**: titles are found through documents sorted by title, words by binary search over
   their sorted texts, spelling variants through Elias-Fano coded buckets, and postings are delta coded in
   blocks, so the 7.2 million English Wikipedia titles index into 338 MB, less than tantivy's 357 MB.
-- **Streaming builds**: documents stream into a `SegmentBuilder` (`typemind.Segment.build(rows, path=...)`
+- **Streaming builds**: documents stream into a `SegmentBuilder` (`completype.Segment.build(rows, path=...)`
   in Python), which keeps them compactly and writes each section to the file as it is produced. Indexing
   the 124,440 HN titles takes 0.29 s and peaks at 59 MB.
 - **Bounded indexing memory**: a `SegmentWriter` starts a new segment file whenever building the current
@@ -145,12 +142,12 @@ flowchart LR
 - **Credentials like `boto3`**: environment, profiles, SSO, web identity, ECS and IMDS.
 
 **Developer experience**
-- Documents as dicts, `typemind.Document` objects, or pandas, polars and Arrow tables, with int or string ids.
-- Indexes, engines, databases and transactions at the top level of `typemind`, an asyncio API, typed stubs
+- Documents as dicts, `completype.Document` objects, or pandas, polars and Arrow tables, with int or string ids.
+- Indexes, engines, databases and transactions at the top level of `completype`, an asyncio API, typed stubs
   and a clear exception hierarchy.
-- [Collections](https://typemind.pages.dev/guides/collections/) on top, for named collections that compact
+- [Collections](https://completype.pages.dev/guides/collections/) on top, for named collections that compact
   themselves.
-- A `typemind` command-line tool, and `tracing` events that also reach Python's `logging`.
+- A `completype` command-line tool, and `tracing` events that also reach Python's `logging`.
 
 ## What it completes
 
@@ -168,12 +165,12 @@ Real results from the index behind the demo above (23 short titles with populari
 ## Installation
 
 ```sh
-pip install typemind
+pip install completype
 ```
 
 ```sh
-cargo add typemind --features store                       # databases on local disk and in memory
-cargo add typemind --features aws-credentials,gcp,azure   # plus S3, GCS and Azure
+cargo add completype --features store                       # databases on local disk and in memory
+cargo add completype --features aws-credentials,gcp,azure   # plus S3, GCS and Azure
 cargo add tokio --features macros,rt-multi-thread         # the database API is async
 ```
 
@@ -192,10 +189,10 @@ searches and builds.
 ### Python
 
 ```python
-import typemind
-from typemind import Index
+import completype
+from completype import Index
 
-docs = [   # also typemind.Document objects, pandas, polars or Arrow tables
+docs = [   # also completype.Document objects, pandas, polars or Arrow tables
     {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95, "synonyms": ["is this the real life"]},
     {"id": "dancing", "text": "Dancing Queen – ABBA", "popularity": 0.85},
     {"id": "dark", "text": "Dancing in the Dark – Bruce Springsteen", "popularity": 0.7},
@@ -228,7 +225,7 @@ engine from the database serves it, loading newer versions by itself every `sync
 default):
 
 ```python
-db = typemind.connect("./data")   # or "s3://bucket/prefix", "gs://...", "az://...", "memory://"
+db = completype.connect("./data")   # or "s3://bucket/prefix", "gs://...", "az://...", "memory://"
 txn = db.begin()
 txn.append("songs", docs)   # upserts; deletes=[...] removes ids
 txn.commit()
@@ -244,7 +241,7 @@ seconds; `engine.sync()` loads it at once.
 
 ```rust
 use std::{sync::Arc, time::Duration};
-use typemind::{Database, Document, Engine, Index, IndexOptions, Replica};
+use completype::{Database, Document, Engine, Index, IndexOptions, Replica};
 
 let docs = || [
     Document::keyed("bohemian", "Bohemian Rhapsody – Queen", 0.95).with_synonym("is this the real life"),
@@ -269,8 +266,8 @@ let _follower = replica.follow(&engine, Duration::from_secs(5));   // syncs unti
 let hits = engine.complete(&["songs"], "danc", 10)?;
 ```
 
-Runnable versions: [`quickstart.rs`](crates/typemind/examples/quickstart.rs) and
-[`quickstart.py`](crates/typemind-py/examples/quickstart.py).
+Runnable versions: [`quickstart.rs`](crates/completype/examples/quickstart.rs) and
+[`quickstart.py`](crates/completype-py/examples/quickstart.py).
 
 ## Guides
 
@@ -294,7 +291,7 @@ Tag documents with `contexts` and restrict any request to them. Filtering happen
 collected, so a filtered request still returns up to `limit` results.
 
 ```python
-index = typemind.Index.from_documents([
+index = completype.Index.from_documents([
     {"id": "dancing", "text": "Dancing Queen – ABBA", "popularity": 0.85, "contexts": ["pop", "disco"]},
     {"id": "dark", "text": "Dancing in the Dark – Bruce Springsteen", "popularity": 0.7, "contexts": ["rock"]},
     {"id": "ownown", "text": "Dancing On My Own – Robyn", "popularity": 0.5, "contexts": ["pop"]},
@@ -362,7 +359,7 @@ See [Layers](docs/guides/layers.md) for each pattern with its output.
 
 ### Semantic and hybrid completion
 
-Documents can carry embeddings from any model. typemind quantises them with
+Documents can carry embeddings from any model. completype quantises them with
 [TurboQuant](https://crates.io/crates/turbovec) (4 bits by default, 2 or 3 optional) and searches them with
 deleted and filtered-out documents masked out.
 
@@ -386,25 +383,25 @@ It also reports both source scores.
 
 ### Databases on disk and in buckets
 
-`typemind.connect(url)` opens a versioned database in a directory or bucket, and creates a local one if it
+`completype.connect(url)` opens a versioned database in a directory or bucket, and creates a local one if it
 does not exist. Commits go straight to storage, durable on return; concurrent writers retry on the newer
 version. Engines sync themselves in a background thread.
 
 ```python
-import typemind
+import completype
 
 # Any process that writes:
-db = typemind.connect("s3://my-bucket/completions")   # or a local path, gs://..., az://...
+db = completype.connect("s3://my-bucket/completions")   # or a local path, gs://..., az://...
 txn = db.begin()
 txn.append("songs", [{"id": f"s{i}", "text": f"song {i}"} for i in range(10_000)], deletes=["s42"])
 txn.commit()
 
 # Every serving process: the engine picks up new versions every sync_every seconds.
-engine = typemind.connect("s3://my-bucket/completions", cache_dir="/var/cache/typemind").engine(sync_every=5.0)
+engine = completype.connect("s3://my-bucket/completions", cache_dir="/var/cache/completype").engine(sync_every=5.0)
 engine.complete("danc", ["songs"])
 ```
 
-Runnable: [`live_updates.py`](crates/typemind-py/examples/live_updates.py).
+Runnable: [`live_updates.py`](crates/completype-py/examples/live_updates.py).
 
 - **Status**: `engine.version` is the version served, and `engine.sync_status` the last background sync's
   `synced_at` and `error`.
@@ -421,12 +418,12 @@ Runnable: [`live_updates.py`](crates/typemind-py/examples/live_updates.py).
 
 ### asyncio
 
-`typemind.AsyncDatabase` has the same methods as a database, awaited, for FastAPI and other asyncio
+`completype.AsyncDatabase` has the same methods as a database, awaited, for FastAPI and other asyncio
 services. Constructing it does not block; storage opens on the first awaited call. Completions stay
 synchronous: they take well under a millisecond.
 
 ```python
-db = typemind.AsyncDatabase("s3://my-bucket/completions")
+db = completype.AsyncDatabase("s3://my-bucket/completions")
 txn = await db.begin()
 txn.append("songs", [{"id": "billie", "text": "Billie Jean – Michael Jackson", "popularity": 0.9}])
 await db.commit(txn)
@@ -438,42 +435,42 @@ See the [FastAPI example](examples/fastapi).
 
 ### Collections
 
-`typemind.Client` is a convenience layer on top: named collections with stored settings, that compact
+`completype.Client` is a convenience layer on top: named collections with stored settings, that compact
 themselves after writes, report `stats()`, and complete synonyms below direct matches in one call. Each
 collection is an index of the same name.
 
 ```python
-client = typemind.Client("./data")
+client = completype.Client("./data")
 songs = client.get_or_create_collection("songs")
 songs.add([{"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95, "synonyms": ["is this the real life"]}])
 songs.complete("is this the real", aliases=True)   # [Suggestion(id='bohemian', ..., kind=MatchKind.SYNONYM)]
 ```
 
 It does not expose index options, the choice of fusion, or getting documents by id; `client.database`
-returns the database underneath. In Rust, `typemind::connect` returns this client. See
-[Collections](https://typemind.pages.dev/guides/collections/).
+returns the database underneath. In Rust, `completype::connect` returns this client. See
+[Collections](https://completype.pages.dev/guides/collections/).
 
 ### Command line
 
-The `typemind` tool operates a database from a terminal or a cron job. Every command takes the database URL
-first (or `TYPEMIND_URL`).
+The `completype` tool operates a database from a terminal or a cron job. Every command takes the database URL
+first (or `COMPLETYPE_URL`).
 
 ```sh
-cargo install typemind-cli
+cargo install completype-cli
 
-typemind s3://my-bucket/completions import songs songs.jsonl   # JSON Lines documents
-typemind s3://my-bucket/completions complete songs "danc" --contexts pop
-typemind s3://my-bucket/completions inspect                    # versions, indexes, sizes
-typemind s3://my-bucket/completions compact songs
-typemind s3://my-bucket/completions cleanup --keep-versions 10
-typemind s3://my-bucket/completions ingest --interval 1         # run an ingestor
+completype s3://my-bucket/completions import songs songs.jsonl   # JSON Lines documents
+completype s3://my-bucket/completions complete songs "danc" --contexts pop
+completype s3://my-bucket/completions inspect                    # versions, indexes, sizes
+completype s3://my-bucket/completions compact songs
+completype s3://my-bucket/completions cleanup --keep-versions 10
+completype s3://my-bucket/completions ingest --interval 1         # run an ingestor
 ```
 
-Engine events are logged to stderr; set `TYPEMIND_LOG=typemind=debug` for more.
+Engine events are logged to stderr; set `COMPLETYPE_LOG=completype=debug` for more.
 
 ### Errors
 
-Every error derives from `typemind.TypemindError`: `ConflictError`, `CorruptionError`, `NotFoundError`
+Every error derives from `completype.CompletypeError`: `ConflictError`, `CorruptionError`, `NotFoundError`
 (also a `LookupError`) with `NamespaceNotFoundError` and `LayerNotFoundError` under it, `InvalidInputError`
 (also a `ValueError`) and `StorageError` (also an `OSError`). The not-found errors carry the missing `name` and
 the names that do exist in `available`, and suggest a name when the missing one looks like a typo:
@@ -494,14 +491,14 @@ LayerNotFoundError: no index 'custmer-a' in namespace 'de-DE' at version 3 (did 
 In Rust, `BuildOptions`, `IndexOptions`, `SearchOptions`, `HybridOptions`, `CompactionPolicy` and
 `CleanupPolicy` expose the same settings through chainable setters, e.g.
 `SearchOptions::new(5).contexts(["pop"])`. The
-[configuration guide](https://typemind.pages.dev/guides/configuration/) lists every setting, including the
+[configuration guide](https://completype.pages.dev/guides/configuration/) lists every setting, including the
 collections layer's.
 
 ## Benchmarks
 
 **Against other engines.** On five corpora, from 124,440 Hacker News titles to all 40 million MusicBrainz
 recordings, 39.6 million Amazon search terms and 41.7 million Open Library works, typed character by
-character, typemind ranks the wanted title best of tantivy, Typesense and Meilisearch in 19 of 20
+character, completype ranks the wanted title best of tantivy, Typesense and Meilisearch in 19 of 20
 comparisons (popular and uniformly drawn targets, typed cleanly and with a typo). On 20,000 prefixes Amazon's
 users really typed, it has the searched term in its top 10 for 28.5% of them, against 25.2% for Meilisearch
 and 23.8% for tantivy. In process it answers 40 million MusicBrainz recordings in 1.5 to 3.0 ms at the
@@ -515,7 +512,7 @@ capability comparison, where the bytes go, settings and caveats are in
 
 A synthetic corpus of 200,000 documents (1 to 4 words from a 30,000-word vocabulary, Zipf-distributed), on
 one core of an Apple M1 Pro. Reproduce with
-`cargo run --release -p typemind --example bench -- 200000 --vectors`.
+`cargo run --release -p completype --example bench -- 200000 --vectors`.
 
 | Step | Result |
 |---|---|
@@ -552,13 +549,13 @@ cache serves them, and replicas carry its hottest entries across index versions.
   group. In a soak test over thousands of versions, serving memory stayed flat.
 
 ```sh
-cargo test --release -p typemind --features store          # unit, database, concurrency and fuzz tests
-TYPEMIND_FUZZ_ITERS=1000000 cargo test --release -p typemind --features store --test fuzz
+cargo test --release -p completype --features store          # unit, database, concurrency and fuzz tests
+COMPLETYPE_FUZZ_ITERS=1000000 cargo test --release -p completype --features store --test fuzz
 ```
 
 ## Non-features
 
-typemind does one job. It deliberately does not include:
+completype does one job. It deliberately does not include:
 - a server or HTTP API; it is serverless by design, so expose it through your own API if you need one;
 - full-text search over long documents, filtering or faceting;
 - multi-field schemas; each document has one text, plus aliases and an optional embedding;
@@ -568,16 +565,16 @@ typemind does one job. It deliberately does not include:
 ## FAQ
 
 **What does "serverless" mean here?**
-The same as for LanceDB: there is no typemind server. The engine is a library in your process, and the
+The same as for LanceDB: there is no completype server. The engine is a library in your process, and the
 database is a set of files in a bucket or directory. Your application is still deployed however you like,
-on containers, VMs or functions; typemind adds no extra service to it.
+on containers, VMs or functions; completype adds no extra service to it.
 
-**How does typemind differ from Elasticsearch, OpenSearch, Typesense or Meilisearch?**
+**How does completype differ from Elasticsearch, OpenSearch, Typesense or Meilisearch?**
 Those are search servers for documents with many fields, filters and facets: you run and scale a cluster,
-and every query crosses the network. typemind is serverless and does autocompletion only: it runs inside
+and every query crosses the network. completype is serverless and does autocompletion only: it runs inside
 your process, and ranks the match kinds a completion box needs (abbreviations, spelling correction, word
 decomposition) together with popularity. Many applications use both: a search server for the results page,
-typemind for the box.
+completype for the box.
 
 **How do several writers avoid conflicts without a server?**
 Through the store. Commits create the next manifest create-only, so exactly one writer wins each version
@@ -587,7 +584,7 @@ the lease generation as a fencing token, so an ingestor that lost its lease cann
 
 **How does it differ from an FST or trie library?**
 [`fst`](https://crates.io/crates/fst) and [marisa-trie](https://github.com/s-yata/marisa-trie) are
-excellent key dictionaries, and typemind uses the same ideas internally. On top of them it adds scoring,
+excellent key dictionaries, and completype uses the same ideas internally. On top of them it adds scoring,
 typo tolerance, abbreviations, semantic search, updates without rebuilding, and storage.
 
 **Which languages does it support?**
@@ -601,7 +598,7 @@ vector at 4 bits. Hundreds of thousands to a few million documents per index fit
 machine.
 
 **Why the name?**
-*typemind* is said "completer": it completes what people type, and the missing vowel is a nod to
+*completype* is said "completer": it completes what people type, and the missing vowel is a nod to
 search-engine names such as Solr. Its wordmark shows the name being completed as you type it.
 
 ## How it works
@@ -615,7 +612,7 @@ protocol.
 
 ## Status
 
-typemind is young. The on-disk format is versioned and checked on load, but it and the API may still change
+completype is young. The on-disk format is versioned and checked on load, but it and the API may still change
 before 1.0. Feedback and issues are very welcome.
 
 ## Contributing
@@ -625,7 +622,7 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and th
 
 ## Acknowledgements
 
-typemind builds on excellent work: [`fst`](https://github.com/BurntSushi/fst) by Andrew Gallant,
+completype builds on excellent work: [`fst`](https://github.com/BurntSushi/fst) by Andrew Gallant,
 [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs), [`turbovec`](https://crates.io/crates/turbovec),
 [`object_store`](https://github.com/apache/arrow-rs-object-store), [`zstd`](https://github.com/gyscos/zstd-rs)
 and [PyO3](https://github.com/PyO3/pyo3). Its trie design is inspired by

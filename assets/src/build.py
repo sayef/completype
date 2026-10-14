@@ -45,11 +45,11 @@ def text_path(font, text, x, baseline, size, tracking=0.0):
 
 
 def wordmark(x, baseline, size, theme):
-    """`type` in the text colour, then `mind` and a square full stop in the accent."""
+    """`comple` in the text colour, then `type` and a square full stop in the accent."""
     tracking = -0.04
-    head, head_w = text_path(BOLD, "type", x, baseline, size, tracking)
+    head, head_w = text_path(BOLD, "comple", x, baseline, size, tracking)
     r_x = x + head_w + tracking * size
-    tail, tail_w = text_path(BOLD, "mind", r_x, baseline, size, tracking)
+    tail, tail_w = text_path(BOLD, "type", r_x, baseline, size, tracking)
     dot = size * 0.17
     dot_x = r_x + tail_w + size * 0.04
     parts = [
@@ -71,20 +71,20 @@ TAGLINE = "Serverless autocompletion for Rust and Python"
 
 if __name__ == "__main__":
     # The full stop alone, for favicons and the docs header.
-    (OUT / "logo.svg").write_text(svg(128, 128, f'<rect x="28" y="28" width="72" height="72" fill="{ACCENT}"/>', "typemind"))
+    (OUT / "logo.svg").write_text(svg(128, 128, f'<rect x="28" y="28" width="72" height="72" fill="{ACCENT}"/>', "completype"))
 
     for theme in THEMES:
         mark, mark_w = wordmark(16, 92, 96, theme)
         tag, tag_w = text_path(MEDIUM, TAGLINE, 20, 140, 24)
         width = int(max(16 + mark_w, 20 + tag_w) + 16)
         body = f'{mark}\n<path d="{tag}" fill="{THEMES[theme]["tagline"]}"/>'
-        (OUT / f"banner-{theme}.svg").write_text(svg(width, 164, body, f"typemind: {TAGLINE.lower()}"))
+        (OUT / f"banner-{theme}.svg").write_text(svg(width, 164, body, f"completype: {TAGLINE.lower()}"))
 
         size, pad = 96, 6
         baseline = pad + size * 0.74
         mark, mark_w = wordmark(pad, baseline, size, theme)
         height = int(baseline + size * 0.24 + pad)
-        (OUT / f"wordmark-{theme}.svg").write_text(svg(int(mark_w + 2 * pad), height, mark, "typemind"))
+        (OUT / f"wordmark-{theme}.svg").write_text(svg(int(mark_w + 2 * pad), height, mark, "completype"))
 
     mark, mark_w = wordmark(0, 0, 160, "dark")
     tag, tag_w = text_path(MEDIUM, TAGLINE, 0, 0, 38)
@@ -94,7 +94,7 @@ if __name__ == "__main__":
 <g transform="translate({left} 330)">{mark}</g>
 <g transform="translate({left + 4} 400)"><path d="{tag}" fill="#A3A1A8"/></g>
 <g transform="translate({left + 4} 456)"><path d="{kinds}" fill="{ACCENT}"/></g>"""
-    (OUT / "social-preview.svg").write_text(svg(1280, 640, social, "typemind"))
+    (OUT / "social-preview.svg").write_text(svg(1280, 640, social, "completype"))
     # The docs site serves its own copies of the logo and banners.
     DOCS = Path("docs/assets")
     if DOCS.is_dir():

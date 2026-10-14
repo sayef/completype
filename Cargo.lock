@@ -734,6 +734,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "completype"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "criterion",
+ "fsst-rs",
+ "fst",
+ "futures",
+ "libc",
+ "memmap2",
+ "object_store",
+ "rapidfuzz",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "turbovec",
+ "url",
+ "uuid",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
+name = "completype-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "completype",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "completype-py"
+version = "0.1.0"
+dependencies = [
+ "completype",
+ "mimalloc",
+ "pyo3",
+ "pyo3-log",
+ "tracing",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2939,58 +2991,6 @@ dependencies = [
  "rand_chacha",
  "rayon",
  "statrs",
-]
-
-[[package]]
-name = "typemind"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "criterion",
- "fsst-rs",
- "fst",
- "futures",
- "libc",
- "memmap2",
- "object_store",
- "rapidfuzz",
- "rayon",
- "rustc-hash",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "turbovec",
- "url",
- "uuid",
- "xxhash-rust",
- "zstd",
-]
-
-[[package]]
-name = "typemind-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "serde_json",
- "tokio",
- "tracing-subscriber",
- "typemind",
-]
-
-[[package]]
-name = "typemind-py"
-version = "0.1.0"
-dependencies = [
- "mimalloc",
- "pyo3",
- "pyo3-log",
- "tracing",
- "typemind",
 ]
 
 [[package]]

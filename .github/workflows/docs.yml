@@ -8,7 +8,7 @@ on:
       - mkdocs.yml
       - CHANGELOG.md
       - CONTRIBUTING.md
-      - crates/typemind-py/python/**
+      - crates/completype-py/python/**
       - .github/workflows/docs.yml
   pull_request:
     paths:
@@ -16,7 +16,7 @@ on:
       - mkdocs.yml
       - CHANGELOG.md
       - CONTRIBUTING.md
-      - crates/typemind-py/python/**
+      - crates/completype-py/python/**
       - .github/workflows/docs.yml
   workflow_dispatch:
 
@@ -39,12 +39,12 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
-      # Cloudflare Pages serves the site at typemind.pages.dev; pull requests only build it.
+      # Cloudflare Pages serves the site at completype.pages.dev; pull requests only build it.
       - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           # Creates the project on the first deploy; later runs only report that it exists.
-          preCommands: wrangler pages project create typemind --production-branch=main || true
-          command: pages deploy site --project-name=typemind --branch=main
+          preCommands: wrangler pages project create completype --production-branch=main || true
+          command: pages deploy site --project-name=completype --branch=main

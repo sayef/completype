@@ -1,13 +1,13 @@
 # Rust API
 
-The Rust API reference is on [docs.rs/typemind](https://docs.rs/typemind). Enable the `store` feature for
+The Rust API reference is on [docs.rs/completype](https://docs.rs/completype). Enable the `store` feature for
 databases, and `aws` (or `aws-credentials`), `gcp` or `azure` for cloud storage. The database API is async
-and runs on Tokio. From synchronous code, `typemind::block_on` runs one of its futures on typemind's
+and runs on Tokio. From synchronous code, `completype::block_on` runs one of its futures on completype's
 internal runtime; do not call it from async code.
 
 ```toml
 [dependencies]
-typemind = { version = "0.1", features = ["store"] }
+completype = { version = "0.1", features = ["store"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -15,18 +15,18 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 | Item | Feature | Role |
 |---|---|---|
-| [`Document`](https://docs.rs/typemind/latest/typemind/struct.Document.html) | | A document: `Document::new(id, text, popularity)` or `Document::keyed(key, text, popularity)`, with `with_synonym`, `with_abbreviation`, `with_context` and `with_vector`. |
-| [`Index`](https://docs.rs/typemind/latest/typemind/struct.Index.html) | | Segments searched as one: `from_documents`, `complete`, `complete_aliases`, `vector_search`, `hybrid_search`, and the `_with` variants taking options. |
-| [`Segment`](https://docs.rs/typemind/latest/typemind/struct.Segment.html), [`SegmentWriter`](https://docs.rs/typemind/latest/typemind/struct.SegmentWriter.html) | | An immutable, memory-mapped set of documents and deletes; and a writer of segment files in bounded memory. |
-| [`Engine`](https://docs.rs/typemind/latest/typemind/struct.Engine.html) | | Indexes by name, published atomically, searched as layers. Returns `LayeredSuggestion`s. |
-| [`Suggestion`](https://docs.rs/typemind/latest/typemind/struct.Suggestion.html), [`AliasSuggestion`](https://docs.rs/typemind/latest/typemind/struct.AliasSuggestion.html), [`HybridSuggestion`](https://docs.rs/typemind/latest/typemind/struct.HybridSuggestion.html) | | Results, with `id`, `key`, `text`, `score` and, for completions, `kind` and byte-range `highlights`. |
-| [`MatchKind`](https://docs.rs/typemind/latest/typemind/enum.MatchKind.html), [`Fusion`](https://docs.rs/typemind/latest/typemind/enum.Fusion.html) | | Match kinds, and hybrid fusion methods. |
-| [`BuildOptions`](https://docs.rs/typemind/latest/typemind/struct.BuildOptions.html), [`IndexOptions`](https://docs.rs/typemind/latest/typemind/struct.IndexOptions.html), [`SearchOptions`](https://docs.rs/typemind/latest/typemind/struct.SearchOptions.html), [`HybridOptions`](https://docs.rs/typemind/latest/typemind/struct.HybridOptions.html) | | Settings, with chainable setters. |
-| [`Error`](https://docs.rs/typemind/latest/typemind/enum.Error.html) | | `Io`, `Corrupt`, `InvalidInput`, `NotFound`, `Conflict` and `Store`, among others. |
+| [`Document`](https://docs.rs/completype/latest/completype/struct.Document.html) | | A document: `Document::new(id, text, popularity)` or `Document::keyed(key, text, popularity)`, with `with_synonym`, `with_abbreviation`, `with_context` and `with_vector`. |
+| [`Index`](https://docs.rs/completype/latest/completype/struct.Index.html) | | Segments searched as one: `from_documents`, `complete`, `complete_aliases`, `vector_search`, `hybrid_search`, and the `_with` variants taking options. |
+| [`Segment`](https://docs.rs/completype/latest/completype/struct.Segment.html), [`SegmentWriter`](https://docs.rs/completype/latest/completype/struct.SegmentWriter.html) | | An immutable, memory-mapped set of documents and deletes; and a writer of segment files in bounded memory. |
+| [`Engine`](https://docs.rs/completype/latest/completype/struct.Engine.html) | | Indexes by name, published atomically, searched as layers. Returns `LayeredSuggestion`s. |
+| [`Suggestion`](https://docs.rs/completype/latest/completype/struct.Suggestion.html), [`AliasSuggestion`](https://docs.rs/completype/latest/completype/struct.AliasSuggestion.html), [`HybridSuggestion`](https://docs.rs/completype/latest/completype/struct.HybridSuggestion.html) | | Results, with `id`, `key`, `text`, `score` and, for completions, `kind` and byte-range `highlights`. |
+| [`MatchKind`](https://docs.rs/completype/latest/completype/enum.MatchKind.html), [`Fusion`](https://docs.rs/completype/latest/completype/enum.Fusion.html) | | Match kinds, and hybrid fusion methods. |
+| [`BuildOptions`](https://docs.rs/completype/latest/completype/struct.BuildOptions.html), [`IndexOptions`](https://docs.rs/completype/latest/completype/struct.IndexOptions.html), [`SearchOptions`](https://docs.rs/completype/latest/completype/struct.SearchOptions.html), [`HybridOptions`](https://docs.rs/completype/latest/completype/struct.HybridOptions.html) | | Settings, with chainable setters. |
+| [`Error`](https://docs.rs/completype/latest/completype/enum.Error.html) | | `Io`, `Corrupt`, `InvalidInput`, `NotFound`, `Conflict` and `Store`, among others. |
 
 ```rust
 use std::sync::Arc;
-use typemind::{AliasKind, Document, Index, IndexOptions, MatchKind, Segment};
+use completype::{AliasKind, Document, Index, IndexOptions, MatchKind, Segment};
 
 let docs = [
     Document::new(1, "Under the Bridge – Red Hot Chili Peppers", 0.75)
@@ -42,22 +42,22 @@ assert_eq!((hits[0].id, hits[0].kind), (1, MatchKind::Abbreviation));
 
 | Item | Feature | Role |
 |---|---|---|
-| [`Database`](https://docs.rs/typemind/latest/typemind/struct.Database.html) | `store` | Versioned manifests of named indexes in a store: `Database::open(url, options)`, `begin`, `open_index`, `compact`, `cleanup`, `acquire_lease`, `submit`. |
-| [`Transaction`](https://docs.rs/typemind/latest/typemind/struct.Transaction.html) | `store` | An optimistic, atomic commit. |
-| [`Replica`](https://docs.rs/typemind/latest/typemind/struct.Replica.html) | `store` | Publishes a database's latest version into an `Engine`: `sync`, and [`follow`](https://docs.rs/typemind/latest/typemind/struct.Replica.html#method.follow), which syncs from a background thread. |
-| [`Follower`](https://docs.rs/typemind/latest/typemind/struct.Follower.html), [`FollowStatus`](https://docs.rs/typemind/latest/typemind/struct.FollowStatus.html) | `store` | The handle `Replica::follow` returns; dropping it stops the thread. `status()` returns `synced_at_ms` and `error`. |
-| [`Lease`](https://docs.rs/typemind/latest/typemind/struct.Lease.html) | `store` | An expiring, fenced lock in the database. |
-| [`ChangeSet`](https://docs.rs/typemind/latest/typemind/struct.ChangeSet.html) | `store` | Upserts and deletes submitted to the inbox. |
-| [`Ingestor`](https://docs.rs/typemind/latest/typemind/struct.Ingestor.html), [`IngestStep`](https://docs.rs/typemind/latest/typemind/enum.IngestStep.html) | `store` | The lease-elected committer of change sets, and the result of a round. |
-| [`CompactionPolicy`](https://docs.rs/typemind/latest/typemind/struct.CompactionPolicy.html), [`CleanupPolicy`](https://docs.rs/typemind/latest/typemind/struct.CleanupPolicy.html) | `store` | Maintenance settings. |
-| [`Store`](https://docs.rs/typemind/latest/typemind/struct.Store.html), [`BlockingStore`](https://docs.rs/typemind/latest/typemind/struct.BlockingStore.html) | `store` | Object-store access, async and blocking. |
+| [`Database`](https://docs.rs/completype/latest/completype/struct.Database.html) | `store` | Versioned manifests of named indexes in a store: `Database::open(url, options)`, `begin`, `open_index`, `compact`, `cleanup`, `acquire_lease`, `submit`. |
+| [`Transaction`](https://docs.rs/completype/latest/completype/struct.Transaction.html) | `store` | An optimistic, atomic commit. |
+| [`Replica`](https://docs.rs/completype/latest/completype/struct.Replica.html) | `store` | Publishes a database's latest version into an `Engine`: `sync`, and [`follow`](https://docs.rs/completype/latest/completype/struct.Replica.html#method.follow), which syncs from a background thread. |
+| [`Follower`](https://docs.rs/completype/latest/completype/struct.Follower.html), [`FollowStatus`](https://docs.rs/completype/latest/completype/struct.FollowStatus.html) | `store` | The handle `Replica::follow` returns; dropping it stops the thread. `status()` returns `synced_at_ms` and `error`. |
+| [`Lease`](https://docs.rs/completype/latest/completype/struct.Lease.html) | `store` | An expiring, fenced lock in the database. |
+| [`ChangeSet`](https://docs.rs/completype/latest/completype/struct.ChangeSet.html) | `store` | Upserts and deletes submitted to the inbox. |
+| [`Ingestor`](https://docs.rs/completype/latest/completype/struct.Ingestor.html), [`IngestStep`](https://docs.rs/completype/latest/completype/enum.IngestStep.html) | `store` | The lease-elected committer of change sets, and the result of a round. |
+| [`CompactionPolicy`](https://docs.rs/completype/latest/completype/struct.CompactionPolicy.html), [`CleanupPolicy`](https://docs.rs/completype/latest/completype/struct.CleanupPolicy.html) | `store` | Maintenance settings. |
+| [`Store`](https://docs.rs/completype/latest/completype/struct.Store.html), [`BlockingStore`](https://docs.rs/completype/latest/completype/struct.BlockingStore.html) | `store` | Object-store access, async and blocking. |
 
 ```rust
 use std::{sync::Arc, time::Duration};
-use typemind::{Database, Document, Engine, IndexOptions, Replica};
+use completype::{Database, Document, Engine, IndexOptions, Replica};
 
 #[tokio::main]
-async fn main() -> Result<(), typemind::Error> {
+async fn main() -> Result<(), completype::Error> {
     let database = Database::open("./data", Vec::<(String, String)>::new()).await?;
     let mut txn = database.begin().await?;
     txn.append_documents("songs", [Document::keyed("bohemian", "Bohemian Rhapsody – Queen", 0.95)], [])?;
@@ -73,31 +73,31 @@ async fn main() -> Result<(), typemind::Error> {
 ```
 
 Runnable examples:
-[`quickstart.rs`](https://github.com/mindyard/typemind/blob/main/crates/typemind/examples/quickstart.rs) for an
+[`quickstart.rs`](https://github.com/mindyard/completype/blob/main/crates/completype/examples/quickstart.rs) for an
 index and a database, and
-[`live_updates.rs`](https://github.com/mindyard/typemind/blob/main/crates/typemind/examples/live_updates.rs)
+[`live_updates.rs`](https://github.com/mindyard/completype/blob/main/crates/completype/examples/live_updates.rs)
 for a followed database with an ingestor.
 
 ## Collections
 
-The [collections](../guides/collections.md) layer. In Rust, `typemind::connect` returns this client; a
+The [collections](../guides/collections.md) layer. In Rust, `completype::connect` returns this client; a
 database is opened with `Database::open`.
 
 | Item | Feature | Role |
 |---|---|---|
-| [`connect`](https://docs.rs/typemind/latest/typemind/fn.connect.html), [`ConnectOptions`](https://docs.rs/typemind/latest/typemind/struct.ConnectOptions.html) | `store` | Opens a client on the database at a URL: `sync_every`, `cache_dir`, `storage` options, `build` and `index` options. |
-| [`Client`](https://docs.rs/typemind/latest/typemind/struct.Client.html) | `store` | A database and its collections: `collections`, `collection`, `create_collection`, `get_or_create_collection`, `drop_collection`, `sync`, and `database()`. |
-| [`Collection`](https://docs.rs/typemind/latest/typemind/struct.Collection.html) | `store` | Named documents: `add`, `delete`, `complete`, `optimize` and `stats`. |
-| [`Query`](https://docs.rs/typemind/latest/typemind/struct.Query.html) | `store` | `limit`, `aliases`, `layers`, `contexts` and `vector`, with chainable setters. |
-| [`Completion`](https://docs.rs/typemind/latest/typemind/struct.Completion.html) | `store` | A result: `id`, `key`, `text`, `score`, `kind`, byte-range `highlights` and `collection`. |
-| [`CollectionStats`](https://docs.rs/typemind/latest/typemind/struct.CollectionStats.html) | `store` | Size and freshness, from `Collection::stats`. |
-| [`Optimize`](https://docs.rs/typemind/latest/typemind/enum.Optimize.html) | `store` | `Auto { policy, min_interval }` or `Off`. |
+| [`connect`](https://docs.rs/completype/latest/completype/fn.connect.html), [`ConnectOptions`](https://docs.rs/completype/latest/completype/struct.ConnectOptions.html) | `store` | Opens a client on the database at a URL: `sync_every`, `cache_dir`, `storage` options, `build` and `index` options. |
+| [`Client`](https://docs.rs/completype/latest/completype/struct.Client.html) | `store` | A database and its collections: `collections`, `collection`, `create_collection`, `get_or_create_collection`, `drop_collection`, `sync`, and `database()`. |
+| [`Collection`](https://docs.rs/completype/latest/completype/struct.Collection.html) | `store` | Named documents: `add`, `delete`, `complete`, `optimize` and `stats`. |
+| [`Query`](https://docs.rs/completype/latest/completype/struct.Query.html) | `store` | `limit`, `aliases`, `layers`, `contexts` and `vector`, with chainable setters. |
+| [`Completion`](https://docs.rs/completype/latest/completype/struct.Completion.html) | `store` | A result: `id`, `key`, `text`, `score`, `kind`, byte-range `highlights` and `collection`. |
+| [`CollectionStats`](https://docs.rs/completype/latest/completype/struct.CollectionStats.html) | `store` | Size and freshness, from `Collection::stats`. |
+| [`Optimize`](https://docs.rs/completype/latest/completype/enum.Optimize.html) | `store` | `Auto { policy, min_interval }` or `Off`. |
 
 ```rust
-use typemind::{connect, ConnectOptions, Document, MatchKind, Optimize, Query};
+use completype::{connect, ConnectOptions, Document, MatchKind, Optimize, Query};
 
 #[tokio::main]
-async fn main() -> Result<(), typemind::Error> {
+async fn main() -> Result<(), completype::Error> {
     let client = connect("memory://", ConnectOptions::default()).await?;
     let songs = client.get_or_create_collection("songs", Optimize::default()).await?;
     songs

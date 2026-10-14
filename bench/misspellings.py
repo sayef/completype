@@ -19,7 +19,7 @@ def misspellings():
     """Misspellings by the correct word, from the cached list."""
     path = CACHE / "data" / "misspellings.txt"
     if not path.exists():
-        r = requests.get(URL, timeout=60, headers={"User-Agent": "typemind-bench (https://github.com/mindyard/typemind)"})
+        r = requests.get(URL, timeout=60, headers={"User-Agent": "completype-bench (https://github.com/mindyard/completype)"})
         r.raise_for_status()
         path.write_text(r.text)
     wrong = {}

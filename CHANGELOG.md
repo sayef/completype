@@ -6,8 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.0](https://github.com/mindyard/typemind/releases/tag/v0.1.0) - 2026-10-14
-
 ### Added
 
 - First release: an embedded autocompletion engine for Rust and Python whose database is an object-store
@@ -17,4 +15,4 @@ All notable changes to this project are documented here. The format follows
 - Immutable, checksummed segments read in place, streaming builds in bounded memory, and tiered compaction.
 - Versioned databases on disk, S3, GCS, Azure or memory, with create-only commits, namespaces, override
   layers, engines that follow new versions, and a lease-elected ingestor for many writers.
-- Python bindings with an asyncio API and typed stubs, and the `typemind` command line.
+- Python bindings with an asyncio API and typed stubs, and the `completype` command line.
