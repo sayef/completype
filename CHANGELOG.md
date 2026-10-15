@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/sayef/completype/releases/tag/v0.1.1) - 2026-10-15
+
 ### Added
 
 - First release: an embedded autocompletion engine for Rust and Python whose database is an object-store
