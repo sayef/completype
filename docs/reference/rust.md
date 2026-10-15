@@ -73,9 +73,9 @@ async fn main() -> Result<(), completype::Error> {
 ```
 
 Runnable examples:
-[`quickstart.rs`](https://github.com/mindyard/completype/blob/main/crates/completype/examples/quickstart.rs) for an
+[`quickstart.rs`](https://github.com/sayef/completype/blob/main/crates/completype/examples/quickstart.rs) for an
 index and a database, and
-[`live_updates.rs`](https://github.com/mindyard/completype/blob/main/crates/completype/examples/live_updates.rs)
+[`live_updates.rs`](https://github.com/sayef/completype/blob/main/crates/completype/examples/live_updates.rs)
 for a followed database with an ingestor.
 
 ## Collections

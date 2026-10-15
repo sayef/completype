@@ -11,7 +11,7 @@ jobs:
   # Publishes `completype` to crates.io, tags `v*` and creates the GitHub release once a release PR is merged.
   # The tag is pushed with GITHUB_TOKEN, so release.yml picks it up through `workflow_run`, not `push`.
   release:
-    if: github.repository_owner == 'mindyard'
+    if: github.repository_owner == 'sayef'
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:
@@ -35,7 +35,7 @@ jobs:
 
   # Opens or updates the release PR: version bump and CHANGELOG.md entry.
   release-pr:
-    if: github.repository_owner == 'mindyard'
+    if: github.repository_owner == 'sayef'
     runs-on: ubuntu-latest
     permissions:
       contents: write

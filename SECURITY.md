@@ -7,7 +7,7 @@ completype is pre-1.0. Security fixes go into the latest release.
 ## Reporting a vulnerability
 
 Please do not open a public issue. Report vulnerabilities privately through
-[GitHub security advisories](https://github.com/mindyard/completype/security/advisories/new).
+[GitHub security advisories](https://github.com/sayef/completype/security/advisories/new).
 
 Include what you found, how to reproduce it and what you think the impact is. We will acknowledge the
 report within five working days and keep you informed until it is resolved. We credit reporters in the

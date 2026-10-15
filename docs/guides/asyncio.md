@@ -57,7 +57,7 @@ event loop for large batches: wrap them in `asyncio.to_thread`, or run bulk load
 `ChangeSet.upsert` only collects documents; `await db.submit(changes)` builds and writes them in a worker
 thread. To run an ingestor under asyncio, see [Many writers](writers.md#under-asyncio).
 
-The [FastAPI example](https://github.com/mindyard/completype/tree/main/examples/fastapi) opens a database and
+The [FastAPI example](https://github.com/sayef/completype/tree/main/examples/fastapi) opens a database and
 an engine once at import time, and serves `/complete` from the engine with synchronous handlers.
 
 ## Collections

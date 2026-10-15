@@ -317,7 +317,7 @@ The [ingestor](writers.md) uses a lease named `ingestor`.
 | Cleanup | Hourly or daily | `completype <url> cleanup --keep-versions 10 --older-than-seconds 3600` |
 
 For asyncio services, see [asyncio](asyncio.md) and the
-[FastAPI example](https://github.com/mindyard/completype/tree/main/examples/fastapi).
+[FastAPI example](https://github.com/sayef/completype/tree/main/examples/fastapi).
 
 ## Memory
 

@@ -8,8 +8,8 @@ edition = "2021"
 rust-version = "1.94.1"
 license = "MIT"
 authors = ["Saiful Islam"]
-repository = "https://github.com/mindyard/completype"
-homepage = "https://github.com/mindyard/completype"
+repository = "https://github.com/sayef/completype"
+homepage = "https://github.com/sayef/completype"
 
 [profile.release]
 lto = "thin"

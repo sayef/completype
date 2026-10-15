@@ -5,7 +5,7 @@ completype compared with tantivy, Typesense and Meilisearch as autocompletion en
 of pageviews; all 40,393,216 MusicBrainz recordings, with their MBIDs as ids, ranked by ListenBrainz
 listens; 39,588,974 Amazon search terms from AmazonQAC, ranked by searches and scored on 20,000 prefixes real
 users typed; and 41,666,206 Open Library works with their first author, ranked by readers. Every engine indexes the same documents and answers the same queries. To reproduce,
-see [`bench/README.md`](https://github.com/mindyard/completype/blob/main/bench/README.md), which describes every
+see [`bench/README.md`](https://github.com/sayef/completype/blob/main/bench/README.md), which describes every
 measurement and setting in detail.
 
 ## Summary
@@ -69,7 +69,7 @@ ids add their bytes to completype's key column.
 | MusicBrainz | 40,393,216 recordings as "name – artist", their MBIDs as ids, all-time ListenBrainz listens as popularity |
 | AmazonQAC | 39,588,974 distinct Amazon search terms, their number of searches as popularity; 20,000 typed prefixes with the term then searched |
 | Open Library | 41,666,206 works as "title – first author", their reading-log entries and ratings as popularity |
-| Queries | Limit 10; the fixed-seed samples in [`bench/`](https://github.com/mindyard/completype/tree/main/bench) (`samples.json` and `samples-<corpus>.json`, with `samples-<corpus>-misspelled.json` for the real misspellings) |
+| Queries | Limit 10; the fixed-seed samples in [`bench/`](https://github.com/sayef/completype/tree/main/bench) (`samples.json` and `samples-<corpus>.json`, with `samples-<corpus>-misspelled.json` for the real misspellings) |
 
 Each competitor uses the recommended way to rank by popularity: Typesense with `score` as
 `default_sorting_field`, Meilisearch with the custom ranking rule `score:desc` after the default rules.
@@ -246,7 +246,7 @@ English misspellings, typed with that word misspelt as people really misspell it
 <!-- end hn-quality-misspelled -->
 
 All metrics, including S@10 and characters saved, are in
-[`bench/results/hn/results.md`](https://github.com/mindyard/completype/blob/main/bench/results/hn/results.md).
+[`bench/results/hn/results.md`](https://github.com/sayef/completype/blob/main/bench/results/hn/results.md).
 
 ## Wikipedia
 
@@ -373,7 +373,7 @@ completype's 337 MB index, by section:
 <!-- end wiki-quality-uniform -->
 
 All metrics are in
-[`bench/results/wiki/results.md`](https://github.com/mindyard/completype/blob/main/bench/results/wiki/results.md).
+[`bench/results/wiki/results.md`](https://github.com/sayef/completype/blob/main/bench/results/wiki/results.md).
 
 ## MusicBrainz
 
@@ -477,7 +477,7 @@ completype's 3.1 GB index, by section:
 <!-- end music-quality-uniform -->
 
 All metrics are in
-[`bench/results/music/results.md`](https://github.com/mindyard/completype/blob/main/bench/results/music/results.md).
+[`bench/results/music/results.md`](https://github.com/sayef/completype/blob/main/bench/results/music/results.md).
 
 ## AmazonQAC
 
@@ -576,7 +576,7 @@ rank. 26% of the searched terms never occur in training, so no engine can reach 
 <!-- end qac-quality-uniform -->
 
 All metrics are in
-[`bench/results/qac/results.md`](https://github.com/mindyard/completype/blob/main/bench/results/qac/results.md).
+[`bench/results/qac/results.md`](https://github.com/sayef/completype/blob/main/bench/results/qac/results.md).
 
 ## Open Library
 
@@ -675,7 +675,7 @@ harness counted such answers. The real misspellings are measured for completype 
 <!-- end books-quality-misspelled -->
 
 All metrics are in
-[`bench/results/books/results.md`](https://github.com/mindyard/completype/blob/main/bench/results/books/results.md).
+[`bench/results/books/results.md`](https://github.com/sayef/completype/blob/main/bench/results/books/results.md).
 
 ## Caveats
 

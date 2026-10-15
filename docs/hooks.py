@@ -5,7 +5,7 @@ import re
 from markdown import Extension
 from markdown.preprocessors import Preprocessor
 
-REPO = "https://github.com/mindyard/completype/blob/main/"
+REPO = "https://github.com/sayef/completype/blob/main/"
 PAGES = {"CHANGELOG.md": "changelog.md", "CONTRIBUTING.md": "contributing.md"}
 LINK = re.compile(r"\]\((CHANGELOG\.md|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|LICENSE)(#[^)]*)?\)")
 

@@ -22,7 +22,7 @@ hide:
     together, and answers in a fraction of a millisecond.</p>
     <div class="cp-actions">
       <a class="md-button md-button--primary" href="getting-started/">Get started</a>
-      <a class="md-button" href="https://github.com/mindyard/completype">GitHub</a>
+      <a class="md-button" href="https://github.com/sayef/completype">GitHub</a>
     </div>
     <code class="cp-install">pip install completype</code>
   </div>

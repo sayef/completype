@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mindyard/completype/main/assets/banner-dark.svg">
-    <img alt="completype: serverless autocompletion for Rust and Python" src="https://raw.githubusercontent.com/mindyard/completype/main/assets/banner-light.svg" width="620">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sayef/completype/main/assets/banner-dark.svg">
+    <img alt="completype: serverless autocompletion for Rust and Python" src="https://raw.githubusercontent.com/sayef/completype/main/assets/banner-light.svg" width="620">
   </picture>
 </p>
 
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mindyard/completype/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/mindyard/completype/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/sayef/completype/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sayef/completype/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://crates.io/crates/completype"><img alt="crates.io" src="https://img.shields.io/crates/v/completype.svg"></a>
   <a href="https://docs.rs/completype"><img alt="docs.rs" src="https://img.shields.io/docsrs/completype"></a>
   <a href="https://pypi.org/project/completype/"><img alt="PyPI" src="https://img.shields.io/pypi/v/completype.svg"></a>
@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mindyard/completype/main/assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
+  <img src="https://raw.githubusercontent.com/sayef/completype/main/assets/demo.svg" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="600">
 </p>
 
 completype is a **serverless autocompletion engine**. In the spirit of [LanceDB](https://github.com/lancedb/lancedb),

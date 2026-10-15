@@ -1,8 +1,8 @@
 site_name: completype
 site_description: "Serverless autocompletion: an embedded engine whose database is a bucket."
 site_url: https://completype.pages.dev/
-repo_url: https://github.com/mindyard/completype
-repo_name: mindyard/completype
+repo_url: https://github.com/sayef/completype
+repo_name: sayef/completype
 edit_uri: edit/main/docs/
 copyright: Copyright &copy; Saiful Islam. Released under the MIT License.
 
@@ -146,4 +146,4 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mindyard/completype
+      link: https://github.com/sayef/completype

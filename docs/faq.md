@@ -61,7 +61,7 @@ search-engine names such as Solr. Its wordmark shows the name being completed as
 completype does one job. It deliberately does not include:
 
 - a server or HTTP API; it is serverless by design, so expose it through your own API if you need one (see
-  the [FastAPI example](https://github.com/mindyard/completype/tree/main/examples/fastapi));
+  the [FastAPI example](https://github.com/sayef/completype/tree/main/examples/fastapi));
 - full-text search over long documents, filtering beyond [contexts](guides/completion.md#contexts), or
   faceting;
 - multi-field schemas; each document has one text, plus aliases and an optional embedding;

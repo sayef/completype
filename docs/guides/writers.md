@@ -179,4 +179,4 @@ async def ingest():
 ```
 
 A runnable Rust example of this flow is
-[`live_updates.rs`](https://github.com/mindyard/completype/blob/main/crates/completype/examples/live_updates.rs).
+[`live_updates.rs`](https://github.com/sayef/completype/blob/main/crates/completype/examples/live_updates.rs).

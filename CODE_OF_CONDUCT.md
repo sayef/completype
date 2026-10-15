@@ -16,7 +16,7 @@ religion, or sexual identity and orientation.
 ## Reporting
 
 Report unacceptable behaviour privately through a
-[GitHub security advisory](https://github.com/mindyard/completype/security/advisories/new) or to the maintainer
+[GitHub security advisory](https://github.com/sayef/completype/security/advisories/new) or to the maintainer
 through [GitHub](https://github.com/sayef). All reports are reviewed
 promptly and handled confidentially. Maintainers may remove, edit or reject contributions, and may ban
 contributors, when this code is not followed. The full enforcement guidelines are in the Contributor

@@ -14,7 +14,7 @@ You need Rust 1.94.1 or newer (the minimum supported version, checked in CI) and
 bindings, Python 3.11+ with [maturin](https://www.maturin.rs/).
 
 ```sh
-git clone https://github.com/mindyard/completype && cd completype
+git clone https://github.com/sayef/completype && cd completype
 cargo test --release -p completype --features store
 
 python -m venv .venv && . .venv/bin/activate

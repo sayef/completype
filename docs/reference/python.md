@@ -1,9 +1,9 @@
 # Python API
 
 The reference for the `completype` package, generated from its typed stubs:
-[`__init__.pyi`](https://github.com/mindyard/completype/blob/main/crates/completype-py/python/completype/__init__.pyi),
-[`completype.pyi`](https://github.com/mindyard/completype/blob/main/crates/completype-py/python/completype/completype.pyi)
-and [`_async.pyi`](https://github.com/mindyard/completype/blob/main/crates/completype-py/python/completype/_async.pyi).
+[`__init__.pyi`](https://github.com/sayef/completype/blob/main/crates/completype-py/python/completype/__init__.pyi),
+[`completype.pyi`](https://github.com/sayef/completype/blob/main/crates/completype-py/python/completype/completype.pyi)
+and [`_async.pyi`](https://github.com/sayef/completype/blob/main/crates/completype-py/python/completype/_async.pyi).
 Every name on this page is importable from `completype`.
 
 ## Databases

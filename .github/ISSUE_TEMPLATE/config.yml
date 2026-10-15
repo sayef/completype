@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/mindyard/completype/security/advisories/new
+    url: https://github.com/sayef/completype/security/advisories/new
     about: Please report vulnerabilities privately.
   - name: Questions and ideas
-    url: https://github.com/mindyard/completype/discussions
+    url: https://github.com/sayef/completype/discussions
     about: Ask questions and share what you built.
