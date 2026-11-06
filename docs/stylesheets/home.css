@@ -1,0 +1,594 @@
+/* The landing page: full width, following the reader's theme, the docs chrome kept quiet. */
+.cp-home {
+  --text: var(--md-default-fg-color);
+  --muted: var(--cp-muted);
+  --line: var(--cp-line);
+  --surface: var(--cp-step);
+
+  color: var(--text);
+  font-family: var(--cp-sans);
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+body:has(.cp-home) .md-main {
+  display: none;
+}
+
+.cp-wrap {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 0 1.2rem;
+}
+
+.cp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cp-home h1,
+.cp-home h2 {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.cp-home h2 {
+  max-width: 30rem;
+  font-size: clamp(1.6rem, 3.4vw, 2.3rem);
+  line-height: 1.1;
+}
+
+.cp-home code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.15rem;
+  background: var(--surface);
+  font-family: var(--cp-mono);
+  font-size: 0.8em;
+  font-stretch: 87.5%;
+}
+
+.cp-home a:not(.cp-btn) {
+  color: var(--md-typeset-a-color);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.cp-lede,
+.cp-sub {
+  max-width: 34rem;
+  margin: 1.1rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.cp-more {
+  margin: 1.4rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+/* Hero: the headline is typed, then completed in the selection colour. */
+.cp-hero {
+  padding: clamp(3rem, 9vh, 6rem) 0 3rem;
+}
+
+.cp-hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 3rem;
+  align-items: center;
+}
+
+.cp-hero h1 {
+  min-height: 2.2em;
+  font-size: clamp(2.2rem, 4.6vw, 3.3rem);
+  line-height: 1.06;
+}
+
+.cp-typed__tail {
+  padding: 0 0.04em;
+  background: var(--cp-selection);
+  color: var(--cp-ink);
+}
+
+.cp-typed__tail:empty {
+  padding: 0;
+}
+
+.cp-caret {
+  display: inline-block;
+  width: 0.06em;
+  height: 1.05em;
+  margin: 0 -0.03em;
+  vertical-align: -0.16em;
+  background: currentColor;
+  animation: cp-blink 1.1s steps(1) infinite;
+}
+
+.cp-typed.is-accepted .cp-caret {
+  animation: none;
+}
+
+@keyframes cp-blink {
+  50% { opacity: 0; }
+}
+
+.cp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.6rem;
+}
+
+.cp-actions--center {
+  justify-content: center;
+}
+
+.cp-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: 0.2rem;
+  color: var(--text) !important;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+}
+
+.cp-btn:hover {
+  border-color: var(--text);
+}
+
+.cp-btn--solid {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--md-default-bg-color) !important;
+}
+
+.cp-btn--solid:hover {
+  background: var(--cp-selection);
+  border-color: var(--cp-selection);
+  color: var(--cp-ink) !important;
+}
+
+.cp-install {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  max-width: 100%;
+  margin-top: 1.2rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.2rem;
+  background: var(--surface);
+  color: var(--text);
+  font: 0.66rem var(--cp-mono);
+  font-stretch: 87.5%;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cp-install:hover {
+  border-color: var(--md-default-fg-color--lighter);
+}
+
+.cp-install__prompt {
+  color: var(--muted);
+}
+
+.cp-install__hint {
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+}
+
+.cp-hero__demo {
+  margin: 0;
+}
+
+.cp-hero__demo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(18, 18, 16, 0.12), 0 24px 56px rgba(18, 18, 16, 0.22);
+}
+
+/* Figures: four numbers from the benchmarks. */
+.cp-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.cp-stats > div {
+  display: flex;
+  flex-direction: column;
+  padding: 1.1rem 1rem 1.1rem 0;
+}
+
+.cp-stats dt {
+  order: 2;
+  font-family: var(--cp-mono);
+  font-size: 0.58rem;
+  font-stretch: 87.5%;
+  color: var(--muted);
+}
+
+.cp-stats dd {
+  order: 1;
+  margin: 0 0 0.2rem;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.cp-stats p {
+  order: 3;
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.cp-note {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+/* Sections. */
+.cp-section {
+  padding: 5.5rem 0 0;
+}
+
+.cp-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 3.5rem;
+  align-items: center;
+}
+
+.cp-split--flip > :first-child {
+  order: 2;
+}
+
+.cp-list {
+  margin: 1.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.cp-list li {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.cp-list strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Match kinds: a query as typed, its top completion, and the kind. */
+.cp-matches {
+  margin: 2.2rem 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.cp-matches li {
+  display: grid;
+  grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) auto;
+  gap: 1.2rem;
+  align-items: baseline;
+  margin: 0;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.cp-home .cp-q {
+  padding: 0;
+  background: none;
+  font-size: 0.74rem;
+}
+
+.cp-q::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.2em;
+  background: var(--md-accent-fg-color);
+}
+
+.cp-matches em {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0.15rem;
+  color: var(--muted);
+  font: normal 0.6rem var(--cp-mono);
+  font-stretch: 87.5%;
+}
+
+.cp-matches li:hover span {
+  background: var(--cp-mark);
+}
+
+/* The serverless diagram, drawn in the page's colours. */
+.cp-diagram {
+  margin: 0;
+}
+
+.cp-diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.cp-dg-box rect,
+.cp-dg-bucket rect {
+  fill: var(--surface);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.cp-dg-bucket rect {
+  stroke: var(--md-default-fg-color--lighter);
+}
+
+.cp-dg-sel rect {
+  fill: var(--cp-selection);
+}
+
+.cp-dg-title {
+  fill: var(--text);
+  font: 600 15px var(--cp-sans);
+}
+
+.cp-dg-code {
+  fill: var(--muted);
+  font: 11px var(--cp-mono);
+  font-stretch: 87.5%;
+}
+
+.cp-dg-on-sel {
+  fill: var(--cp-ink);
+}
+
+.cp-dg-arrow path {
+  fill: none;
+  stroke: var(--md-default-fg-color--lighter);
+  stroke-width: 1.5;
+}
+
+.cp-dg-head path {
+  fill: var(--md-default-fg-color--lighter);
+}
+
+/* Layers: a stack of bars, then what a search through it returns. */
+.cp-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cp-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cp-stack li {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  width: var(--w);
+  min-width: max-content;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.cp-stack li:first-child {
+  background: var(--md-default-fg-color);
+  border-color: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+.cp-stack li:first-child code {
+  color: var(--md-default-bg-color);
+}
+
+.cp-home .cp-stack code {
+  padding: 0;
+  background: none;
+  color: var(--text);
+}
+
+/* Code cards. */
+.cp-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 2.2rem;
+}
+
+.cp-code {
+  border: 1px solid var(--line);
+  border-radius: 0.2rem;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.cp-code__bar {
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.cp-code__bar em {
+  color: var(--muted);
+  font: normal 0.6rem var(--cp-mono);
+  font-stretch: 87.5%;
+}
+
+.cp-code pre {
+  margin: 0;
+  padding: 0.9rem 1rem 1.1rem;
+  overflow-x: auto;
+}
+
+.cp-home .cp-code pre code {
+  padding: 0;
+  background: none;
+  color: var(--text);
+  font-size: 0.64rem;
+  line-height: 1.75;
+}
+
+.cp-code .k {
+  font-weight: 700;
+}
+
+.cp-code .s,
+.cp-code .n {
+  color: var(--md-typeset-a-color);
+}
+
+.cp-code .c {
+  color: var(--muted);
+}
+
+.cp-code .l {
+  padding: 0 0.3em;
+  background: var(--cp-selection);
+  color: var(--cp-ink);
+}
+
+/* Questions. */
+.cp-faq {
+  max-width: 40rem;
+}
+
+.cp-faq h2 {
+  margin-bottom: 1.4rem;
+}
+
+.cp-faq details {
+  border-top: 1px solid var(--line);
+}
+
+.cp-faq details:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+
+.cp-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.cp-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.cp-faq summary::after {
+  content: "+";
+  color: var(--muted);
+  font-family: var(--cp-mono);
+  transition: transform 0.2s;
+}
+
+.cp-faq details[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.cp-faq details p {
+  margin: 0 0 1.1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.65;
+}
+
+/* Closing call to action. */
+.cp-cta {
+  margin-top: 5.5rem;
+  padding: 4.5rem 0;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.cp-cta h2 {
+  max-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-caret {
+    animation: none;
+  }
+
+  .cp-faq summary::after {
+    transition: none;
+  }
+}
+
+@media screen and (max-width: 60em) {
+  .cp-hero__grid,
+  .cp-split,
+  .cp-code-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+
+  .cp-split--flip > :first-child {
+    order: 0;
+  }
+
+  .cp-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp-matches li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem 1rem;
+  }
+
+  .cp-matches li span {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .cp-section {
+    padding-top: 4rem;
+  }
+}

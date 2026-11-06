@@ -677,6 +677,32 @@ harness counted such answers. The real misspellings are measured for completype 
 All metrics are in
 [`bench/results/books/results.md`](https://github.com/sayef/completype/blob/main/bench/results/books/results.md).
 
+## A synthetic corpus
+
+A synthetic corpus of 200,000 documents (1 to 4 words from a 30,000-word vocabulary, Zipf-distributed), on
+one core of an Apple M1 Pro. Reproduce with
+`cargo run --release -p completype --example bench -- 200000 --vectors`.
+
+| Step | Result |
+|---|---|
+| Build a segment | 188 ms, 5.6 MB |
+| Open a segment (memory-mapped) | 0.2 ms |
+| Build a delta segment of 1,000 upserts | 3.7 ms |
+
+| Query, limit 10 | p50 | p99 |
+|---|---|---|
+| Every prefix of 2,000 titles, as typed (33,744 queries) | 0.08 ms | 2.6 ms |
+| The same, with the short-query cache (default) | 0.05 ms | 0.51 ms |
+| The same, over a base plus a delta segment | 0.12 ms | 3.4 ms |
+| One-edit typos | 0.21 ms | 1.1 ms |
+| Vector search, 256-d, 4-bit | 1.1 ms | 1.2 ms |
+| Hybrid search (RRF) | 1.3 ms | 3.7 ms |
+
+The vector rows come from the same run with `--vectors`, whose segment is 32.8 MB.
+
+One- and two-character prefixes, which match large parts of the corpus, dominate the tail. The short-query
+cache serves them, and replicas carry its hottest entries across index versions.
+
 ## Caveats
 
 - **In-process against network.** completype and tantivy run inside the benchmark process; Typesense and

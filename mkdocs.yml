@@ -8,11 +8,10 @@ copyright: Copyright &copy; Saiful Islam. Released under the MIT License.
 
 theme:
   name: material
-  logo: assets/wordmark-dark.svg
+  logo: assets/wordmark-light.svg
   favicon: assets/logo.svg
-  font:
-    text: Source Sans 3
-    code: JetBrains Mono
+  custom_dir: overrides
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -49,9 +48,17 @@ theme:
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/home.css
+
+extra_javascript:
+  - javascripts/site.js
 
 plugins:
   - search
+  # Fonts are downloaded at build time and served from the site itself.
+  - privacy:
+      assets_exclude:
+        - unpkg.com/mermaid@*
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -142,6 +149,8 @@ nav:
       - FAQ: faq.md
       - Changelog: changelog.md
       - Contributing: contributing.md
+      - Writing the docs: writing.md
+      - Design and brand: design.md
 
 extra:
   social:
