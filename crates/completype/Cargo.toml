@@ -26,9 +26,9 @@ rayon = "1.10"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 rapidfuzz = "0.5"
 turbovec = "1.0.0"
-zstd = "0.13"
+zstd = "0.14"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-fsst-rs = "0.6"
+fsst-rs = "0.7"
 async-trait = { version = "0.1", optional = true }
 aws-config = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "credentials-process", "rt-tokio", "sso", "default-https-client"] }
 aws-credential-types = { version = "1", optional = true }
