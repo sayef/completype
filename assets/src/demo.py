@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from build import ACCENT, INK, MEDIUM, PAPER, REGULAR, text_path
+from build import ACCENT, INK, MEDIUM, MONO, PAPER, text_path
 
 scenes = json.load(open(Path(__file__).with_name("demo.json")))
 FRAME = int(__import__("os").environ.get("FRAME", "-1"))
@@ -31,12 +31,12 @@ def window(start, end, fade=0.2):
 
 parts = [
     f'<rect width="{W}" height="{H}" rx="18" fill="{INK}"/>',
-    '<rect x="28" y="28" width="664" height="56" rx="12" fill="#1C1C1F" stroke="#2E2E33" stroke-width="1.5"/>',
-    '<circle cx="62" cy="54" r="9" fill="none" stroke="#6B6B73" stroke-width="2.5"/><line x1="68.5" y1="60.5" x2="75" y2="67" stroke="#6B6B73" stroke-width="2.5" stroke-linecap="round"/>',
+    '<rect x="28" y="28" width="664" height="56" rx="12" fill="#1D1C18" stroke="#302F2A" stroke-width="1.5"/>',
+    '<circle cx="62" cy="54" r="9" fill="none" stroke="#8A8980" stroke-width="2.5"/><line x1="68.5" y1="60.5" x2="75" y2="67" stroke="#8A8980" stroke-width="2.5" stroke-linecap="round"/>',
 ]
 for n, scene in enumerate(scenes):
     start = n * SCENE
-    query, width = text_path(REGULAR, scene["query"], 92, 63, 22)
+    query, width = text_path(MONO, scene["query"], 92, 63, 21)
     clip = f"typed{n}"
     widths = f"0;0;{width + 2:.1f};{width + 2:.1f}" if FRAME < 0 else ";".join([f"{width + 2:.1f}"] * 4)
     keys = f'0;{t(start + 0.15)};{t(start + TYPE)};1'
@@ -52,7 +52,7 @@ for n, scene in enumerate(scenes):
         badge, bw = text_path(MEDIUM, kind, 0, 0, 13)
         bx = 668 - bw - 24
         rows.append(
-            f'<rect x="36" y="{y}" width="648" height="44" rx="10" fill="{"#1C1C1F" if i == 0 else "none"}"/>'
+            f'<rect x="36" y="{y}" width="648" height="44" rx="10" fill="{"#1D1C18" if i == 0 else "none"}"/>'
             f'<path d="{label}" fill="#E8E6E0"/>'
             f'<rect x="{bx:.1f}" y="{y + 11}" width="{bw + 24:.1f}" height="22" rx="11" fill="{KIND[kind]}" fill-opacity="0.18" stroke="{KIND[kind]}" stroke-opacity="0.6"/>'
             f'<g transform="translate({bx + 12:.1f} {y + 26.5})"><path d="{badge}" fill="{KIND[kind]}"/></g>'
@@ -64,12 +64,12 @@ for n, scene in enumerate(scenes):
         f'<rect y="42" width="2.5" height="26" rx="1.25" fill="{ACCENT}">'
         f'<animate attributeName="x" dur="{TOTAL}s" repeatCount="indefinite" keyTimes="{keys}" values="93;93;{95 + width:.1f};{95 + width:.1f}"/>'
         f'<animate attributeName="opacity" dur="0.9s" repeatCount="indefinite" values="1;1;0;0" keyTimes="0;0.5;0.55;1"/></rect>'
-        f'<g transform="translate({W - 44 - cw:.1f} 340)"><path d="{caption}" fill="#6B6B73"/></g>'
+        f'<g transform="translate({W - 44 - cw:.1f} 340)"><path d="{caption}" fill="#8A8980"/></g>'
         f'<g opacity="0">{window(start + SHOW, start + SCENE, 0.15)}{"".join(rows)}</g>'
         "</g>"
     )
 dots = "".join(
-    f'<circle cx="{44 + i * 16}" cy="336" r="4" fill="#2E2E33"/>'
+    f'<circle cx="{44 + i * 16}" cy="336" r="4" fill="#302F2A"/>'
     f'<circle cx="{44 + i * 16}" cy="336" r="4" fill="{ACCENT}" opacity="0">{window(i * SCENE, (i + 1) * SCENE, 0.1)}</circle>'
     for i in range(len(scenes))
 )

@@ -1,0 +1,206 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+{{ super() }}
+<div class="cp-home">
+  <section class="cp-hero">
+    <div class="cp-wrap cp-hero__grid">
+      <div class="cp-hero__text">
+        <h1>
+          <span class="cp-sr">Autocompletion as a library.</span>
+          <span class="cp-typed" aria-hidden="true" data-cp-claims='[["Autocompletion as a l", "ibrary."], ["Your database is a b", "ucket."], ["0.15 ms at the m", "edian."], ["40 million titles in 3", ".1 GB."], ["Typos forgiven, r", "anks kept."]]'>
+            <span class="cp-typed__head">Autocompletion as a l</span><span class="cp-caret"></span><mark class="cp-typed__tail">ibrary.</mark>
+          </span>
+        </h1>
+        <p class="cp-lede">An embedded engine for Rust and Python whose database is a bucket. Every process reads the
+          index straight from storage and ranks exact, prefix, infix, abbreviation and misspelt matches together,
+          in a fraction of a millisecond. No cluster, no server.</p>
+        <div class="cp-actions">
+          <a class="cp-btn cp-btn--solid" href="{{ 'getting-started/' | url }}">Get started</a>
+          <a class="cp-btn" href="https://github.com/sayef/completype">View on GitHub</a>
+        </div>
+        <button class="cp-install" type="button" data-cp-copy="pip install completype" title="Copy the install command">
+          <span class="cp-install__prompt">$</span> pip install completype <span class="cp-install__hint">copy</span>
+        </button>
+      </div>
+      <figure class="cp-hero__demo">
+        <img src="{{ 'assets/demo.svg' | url }}" alt="completype completing music queries: prefix, abbreviation, spelling correction, word decomposition and infix" width="720" height="380">
+      </figure>
+    </div>
+  </section>
+
+  <section class="cp-wrap">
+    <dl class="cp-stats">
+      <div><dt>median query</dt><dd>0.15 ms</dd><p>Hacker News titles, typed as prefixes</p></div>
+      <div><dt>queries a second</dt><dd>40,016</dd><p>on 8 threads, Hacker News titles</p></div>
+      <div><dt>index size</dt><dd>3.1 GB</dd><p>for 40 million MusicBrainz recordings</p></div>
+      <div><dt>best ranking</dt><dd>19 of 20</dd><p>comparisons with tantivy, Typesense and Meilisearch</p></div>
+    </dl>
+    <p class="cp-note">Measured on one laptop; see <a href="{{ 'benchmarks/' | url }}">Benchmarks</a> for every table and caveat.</p>
+  </section>
+
+  <section class="cp-section">
+    <div class="cp-wrap">
+      <h2>Every kind of match, ranked together.</h2>
+      <p class="cp-sub">One request collects every match kind and ranks them with popularity, match kind and text
+        length. You never choose between prefix, infix or fuzzy search. Results from the demo index:</p>
+      <ol class="cp-matches">
+        <li><code class="cp-q">danc</code><span>Dancing Queen – ABBA</span><em>prefix</em></li>
+        <li><code class="cp-q">rhcp</code><span>Under the Bridge – Red Hot Chili Peppers</span><em>abbreviation</em></li>
+        <li><code class="cp-q">bohemain rapsody</code><span>Bohemian Rhapsody – Queen</span><em>fuzzy</em></li>
+        <li><code class="cp-q">dancingqueen</code><span>Dancing Queen – ABBA</span><em>prefix</em></li>
+        <li><code class="cp-q">queen</code><span>Bohemian Rhapsody – Queen</span><em>infix</em></li>
+        <li><code class="cp-q">is this the real</code><span>Bohemian Rhapsody – Queen</span><em>synonym</em></li>
+      </ol>
+      <p class="cp-more"><a href="{{ 'guides/completion/' | url }}">How completion and ranking work</a></p>
+    </div>
+  </section>
+
+  <section class="cp-section">
+    <div class="cp-wrap cp-split">
+      <div>
+        <h2>The database is a bucket.</h2>
+        <p class="cp-sub">completype is a library, not a service. Storage is the only shared component.</p>
+        <ul class="cp-list">
+          <li><strong>Create-only commits.</strong> Version N + 1 is written with <code>If-None-Match</code>, so
+            concurrent writers never corrupt each other.</li>
+          <li><strong>Readers follow by themselves.</strong> Engines load only changed, immutable segments and switch
+            versions atomically.</li>
+          <li><strong>No hop on the hot path.</strong> Queries run inside your process, on memory-mapped segments.</li>
+        </ul>
+        <p class="cp-more"><a href="{{ 'guides/serverless/' | url }}">Serverless deployment</a></p>
+      </div>
+      <figure class="cp-diagram">
+        <svg viewBox="0 0 520 300" role="img" aria-label="Writers commit to a bucket of manifests and segments; every app process reads from it">
+          <g class="cp-dg-box"><rect x="8" y="58" width="136" height="70"/><rect x="8" y="172" width="136" height="70"/></g>
+          <text class="cp-dg-title" x="22" y="86">a worker</text><text class="cp-dg-code" x="22" y="110">txn.commit()</text>
+          <text class="cp-dg-title" x="22" y="200">an ingestor</text><text class="cp-dg-code" x="22" y="224">leased</text>
+          <g class="cp-dg-bucket"><rect x="196" y="40" width="132" height="220"/></g>
+          <text class="cp-dg-title" x="210" y="68">bucket</text>
+          <text class="cp-dg-code" x="210" y="92">s3 · gs · az</text>
+          <g class="cp-dg-sel"><rect x="208" y="124" width="108" height="28"/><rect x="208" y="166" width="108" height="28"/></g>
+          <text class="cp-dg-code cp-dg-on-sel" x="216" y="143">_versions/</text>
+          <text class="cp-dg-code cp-dg-on-sel" x="216" y="185">segments/</text>
+          <text class="cp-dg-code" x="210" y="236">the database</text>
+          <g class="cp-dg-box"><rect x="380" y="28" width="132" height="64"/><rect x="380" y="118" width="132" height="64"/><rect x="380" y="208" width="132" height="64"/></g>
+          <text class="cp-dg-title" x="394" y="56">your app</text><text class="cp-dg-code" x="394" y="78">engine.complete</text>
+          <text class="cp-dg-title" x="394" y="146">your app</text><text class="cp-dg-code" x="394" y="168">engine.complete</text>
+          <text class="cp-dg-title" x="394" y="236">your app</text><text class="cp-dg-code" x="394" y="258">engine.complete</text>
+          <g class="cp-dg-arrow">
+            <path d="M144 93 H190"/><path d="M144 207 H190"/>
+            <path d="M328 150 C350 150 352 60 374 60"/><path d="M328 150 H374"/><path d="M328 150 C350 150 352 240 374 240"/>
+          </g>
+          <g class="cp-dg-head">
+            <path d="M190 88 L196 93 L190 98Z"/><path d="M190 202 L196 207 L190 212Z"/>
+            <path d="M374 55 L380 60 L374 65Z"/><path d="M374 145 L380 150 L374 155Z"/><path d="M374 235 L380 240 L374 245Z"/>
+          </g>
+        </svg>
+      </figure>
+    </div>
+  </section>
+
+  <section class="cp-section">
+    <div class="cp-wrap cp-split cp-split--flip">
+      <div>
+        <h2>One catalogue, many views.</h2>
+        <p class="cp-sub">Tenants, locales, listeners, promotions and takedowns are small indexes stacked on the
+          shared catalogue, overriding it per document id, without a copy. Five layers over 200,000 titles answer
+          in 0.2 ms at the median.</p>
+        <p class="cp-more"><a href="{{ 'guides/layers/' | url }}">Layers</a></p>
+      </div>
+      <div class="cp-layers">
+        <ol class="cp-stack" aria-label="The layer stack, from the shared catalogue up">
+          <li style="--w: 100%"><code>catalog</code><span>shared, built once</span></li>
+          <li style="--w: 62%"><code>catalog-de</code><span>local charts</span></li>
+          <li style="--w: 40%"><code>radio</code><span>edits and removals</span></li>
+          <li style="--w: 22%"><code>user-…</code><span>own plays</span></li>
+          <li style="--w: 12%"><code>takedowns</code></li>
+        </ol>
+        <div class="cp-code">
+          <div class="cp-code__bar"><em>engine.complete("queen", stack)</em></div>
+<pre><code>Bohemian Rhapsody (Remastered 2011) – Queen  <span class="l">radio</span>
+Dancing Queen – ABBA                         <span class="l">catalog</span>
+Dancing Queen (Live Session) – ABBA          <span class="l">radio</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cp-section">
+    <div class="cp-wrap">
+      <h2>A few lines, in either language.</h2>
+      <div class="cp-code-grid">
+        <div class="cp-code">
+          <div class="cp-code__bar"><em>Python</em></div>
+<pre><code><span class="k">import</span> completype
+
+db = completype.connect(<span class="s">"s3://my-bucket/completions"</span>)
+txn = db.begin()
+txn.append(<span class="s">"songs"</span>, docs)
+txn.commit()
+
+engine = db.engine()   <span class="c"># follows new versions</span>
+engine.complete(<span class="s">"danc"</span>, [<span class="s">"songs"</span>])</code></pre>
+        </div>
+        <div class="cp-code">
+          <div class="cp-code__bar"><em>Rust</em></div>
+<pre><code><span class="k">let</span> database = Database::open(<span class="s">"./data"</span>, Vec::&lt;(String, String)&gt;::new()).<span class="k">await</span>?;
+<span class="k">let mut</span> txn = database.begin().<span class="k">await</span>?;
+txn.append_documents(<span class="s">"songs"</span>, docs, [])?;
+txn.commit().<span class="k">await</span>?;
+
+<span class="k">let</span> engine = Arc::new(Engine::new());
+<span class="k">let</span> replica = Arc::new(Replica::new(database, IndexOptions::default()));
+replica.sync(&amp;engine).<span class="k">await</span>?;
+<span class="k">let</span> _follower = replica.follow(&amp;engine, Duration::from_secs(<span class="n">5</span>));
+engine.complete(&amp;[<span class="s">"songs"</span>], <span class="s">"danc"</span>, <span class="n">10</span>)?;</code></pre>
+        </div>
+      </div>
+      <p class="cp-more"><a href="{{ 'getting-started/' | url }}">The full quick start</a></p>
+    </div>
+  </section>
+
+  <section class="cp-section">
+    <div class="cp-wrap cp-faq">
+      <h2>Questions</h2>
+      <details>
+        <summary>What does serverless mean here?</summary>
+        <p>There is no completype server. The engine is a library in your process, and the database is a set of
+          files in a bucket or directory. Your application is deployed however you like; completype adds no
+          service to it.</p>
+      </details>
+      <details>
+        <summary>How is it different from Elasticsearch, Typesense or Meilisearch?</summary>
+        <p>Those are search servers for documents with many fields, filters and facets, and every query crosses
+          the network. completype does autocompletion only, inside your process. Many applications use both: a
+          search server for the results page, completype for the box.</p>
+      </details>
+      <details>
+        <summary>How do several writers avoid conflicts without a server?</summary>
+        <p>Through the store. Each commit creates the next manifest create-only, so exactly one writer wins each
+          version and the others retry. For high write rates, a single ingestor elected by an expiring lease
+          commits queued change sets in order.</p>
+      </details>
+      <details>
+        <summary>How fresh are completions after an update?</summary>
+        <p>Engines sync every <code>sync_every</code> seconds (5 by default), so a committed transaction appears
+          within a few seconds; <code>engine.sync()</code> loads it at once.</p>
+      </details>
+      <p class="cp-more"><a href="{{ 'faq/' | url }}">All questions</a></p>
+    </div>
+  </section>
+
+  <section class="cp-cta">
+    <div class="cp-wrap">
+      <h2>Complete your first query.</h2>
+      <div class="cp-actions cp-actions--center">
+        <a class="cp-btn cp-btn--solid" href="{{ 'getting-started/' | url }}">Get started</a>
+        <a class="cp-btn" href="{{ 'concepts/' | url }}">Read the concepts</a>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block site_nav %}{% endblock %}
+{% block content %}{% endblock %}

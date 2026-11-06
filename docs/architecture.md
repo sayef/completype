@@ -224,3 +224,22 @@ Stores go through [`object_store`](https://crates.io/crates/object_store): local
   shared config and credentials files, SSO, web identity, ECS and IMDS. Explicit options override them.
 - **Disk cache.** An optional cache keeps downloaded segments on local disk and memory-maps them.
   Segment files are immutable, so cached copies are used without a round trip.
+
+## Guarantees and testing
+
+- **Determinism.** Results depend only on the documents and settings, not on how the index was segmented,
+  compacted or queried concurrently. The tests re-run queries sampled under concurrent updates, on the same
+  snapshot and on a freshly built index, and require bit-identical output.
+- **Concurrency.** Readers never block. New index versions are published atomically, and a reader keeps
+  the version it started with.
+- **Integrity.** Every segment ends with an xxh3 checksum. `Segment::open` checks a local file's structure
+  only; `Segment::verify`, `Segment::from_bytes` and downloads into a store's cache check the checksum and
+  every section. Stable-Rust fuzz tests feed in truncated, bit-flipped and garbage segments, random Unicode
+  queries and corrupted manifests.
+- **Memory.** Replicas replace indexes group by group, and release old segments before loading the next
+  group. In a soak test over thousands of versions, serving memory stayed flat.
+
+```sh
+cargo test --release -p completype --features store          # unit, database, concurrency and fuzz tests
+COMPLETYPE_FUZZ_ITERS=1000000 cargo test --release -p completype --features store --test fuzz
+```

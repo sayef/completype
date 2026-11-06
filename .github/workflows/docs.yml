@@ -8,6 +8,8 @@ on:
       - mkdocs.yml
       - CHANGELOG.md
       - CONTRIBUTING.md
+      - DESIGN.md
+      - overrides/**
       - crates/completype-py/python/**
       - .github/workflows/docs.yml
   pull_request:
@@ -16,6 +18,8 @@ on:
       - mkdocs.yml
       - CHANGELOG.md
       - CONTRIBUTING.md
+      - DESIGN.md
+      - overrides/**
       - crates/completype-py/python/**
       - .github/workflows/docs.yml
   workflow_dispatch:
