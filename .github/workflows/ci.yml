@@ -4,14 +4,35 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Scan the whole history for secrets
+        env:
+          GITLEAKS: "8.21.2"
+        run: |
+          base=https://github.com/gitleaks/gitleaks/releases/download/v$GITLEAKS
+          curl -sSfLO "$base/gitleaks_${GITLEAKS}_linux_x64.tar.gz"
+          curl -sSfL "$base/gitleaks_${GITLEAKS}_checksums.txt" | sha256sum -c --ignore-missing
+          tar xzf "gitleaks_${GITLEAKS}_linux_x64.tar.gz" gitleaks
+          ./gitleaks git --redact --no-banner -v .
+
   lint:
     runs-on: ubuntu-latest
     steps:
