@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/sayef/completype/compare/v0.1.1...v0.1.2) - 2026-11-06
+
 ## [0.1.1](https://github.com/sayef/completype/releases/tag/v0.1.1) - 2026-10-15
 
 ### Added
