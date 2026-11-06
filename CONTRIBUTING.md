@@ -23,6 +23,12 @@ maturin develop --release
 pytest crates/completype-py/tests
 ```
 
+Pre-commit hooks run the formatting, clippy and secret checks that CI runs; install them once:
+
+```sh
+pipx install pre-commit && pre-commit install   # or: cargo install prek && prek install
+```
+
 Cloud tests run only when you point them at a bucket you own:
 
 ```sh
