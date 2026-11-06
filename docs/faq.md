@@ -53,8 +53,8 @@ completype is young. The format is versioned and checked on load, but it and the
 
 ## Why the name?
 
-*completype* is said "completer": it completes what people type, and the missing vowel is a nod to
-search-engine names such as Solr. Its wordmark shows the name being completed as you type it.
+*completype* is "complete" and "type" run together, said "complete-type": it completes what people
+type. Its wordmark shows the name being completed as you type it.
 
 ## Non-features
 
