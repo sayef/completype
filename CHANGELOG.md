@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The format follows
   because the store client retried it, counts once. Before, a commit could be applied twice or fail
   with a conflict against itself. When a write's outcome cannot be read back, the commit raises the new
   `OutcomeUnknown` error (`OutcomeUnknownError` in Python, a `StorageError`).
+- Lease expiry is measured by the store's clock, from the lease object's modification time, so a machine
+  with a fast clock can no longer take over a live lease. Leases written by earlier versions keep the
+  old rule.
+- Reads, listings, deletes and plain writes are retried after transient store errors, with jittered
+  backoff. Create-only writes are never repeated blindly.
+- Before its first commit, lease or change set, a database checks once that the store refuses a second
+  create-only write to the same key. Some S3-compatible stores ignore `If-None-Match`, which would let
+  concurrent writers overwrite each other; completype now refuses to write to them.
 
 ## [0.1.1](https://github.com/sayef/completype/releases/tag/v0.1.1) - 2026-10-15
 
