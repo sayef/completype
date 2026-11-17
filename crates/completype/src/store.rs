@@ -97,6 +97,20 @@ impl Store {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_object_store(inner: Arc<dyn ObjectStore>) -> Self {
+        Self {
+            inner,
+            prefix: Path::default(),
+            local_root: None,
+            cache: None,
+            namespace: "test".into(),
+            tags: TagSet::default(),
+            pid: std::process::id(),
+            reopen: None,
+        }
+    }
+
     fn local(path: &FsPath) -> Result<Self, Error> {
         std::fs::create_dir_all(path)?;
         let root = path.canonicalize()?;
@@ -759,134 +773,12 @@ mod tests {
         }
     }
 
-    /// How [`Faulty`] answers the next create-only writes and reads.
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    enum Fault {
-        /// Writes, then reports an error, as a timed-out request that landed.
-        LandThenFail,
-        /// Writes, then reports that the object exists, as a client retry of a landed request.
-        LandThenExists,
-        /// Fails without writing.
-        FailBefore,
-    }
+    use crate::sim::{Fault, FaultStore};
 
-    /// An in-memory store that injects faults into create-only writes, and optionally into reads.
-    #[derive(Debug, Default)]
-    struct Faulty {
-        inner: InMemory,
-        faults: std::sync::Mutex<Vec<Fault>>,
-        failing_reads: std::sync::atomic::AtomicBool,
-    }
-
-    impl Faulty {
-        fn error() -> object_store::Error {
-            object_store::Error::Generic {
-                store: "Faulty",
-                source: "request timed out".into(),
-            }
-        }
-    }
-
-    impl std::fmt::Display for Faulty {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "Faulty")
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ObjectStore for Faulty {
-        async fn put_opts(
-            &self,
-            location: &Path,
-            payload: PutPayload,
-            opts: PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            let fault = match opts.mode {
-                PutMode::Create => self.faults.lock().unwrap().pop(),
-                _ => None,
-            };
-            match fault {
-                None => self.inner.put_opts(location, payload, opts).await,
-                Some(Fault::FailBefore) => Err(Self::error()),
-                Some(Fault::LandThenFail) => {
-                    self.inner.put_opts(location, payload, opts).await?;
-                    Err(Self::error())
-                }
-                Some(Fault::LandThenExists) => {
-                    self.inner
-                        .put_opts(location, payload.clone(), opts.clone())
-                        .await?;
-                    self.inner.put_opts(location, payload, opts).await
-                }
-            }
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &Path,
-            opts: object_store::PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
-
-        async fn get_opts(
-            &self,
-            location: &Path,
-            options: object_store::GetOptions,
-        ) -> object_store::Result<object_store::GetResult> {
-            if self.failing_reads.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(Self::error());
-            }
-            self.inner.get_opts(location, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: futures::stream::BoxStream<'static, object_store::Result<Path>>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&Path>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-        {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&Path>,
-        ) -> object_store::Result<object_store::ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &Path,
-            to: &Path,
-            options: object_store::CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-    }
-
-    fn faulty(faults: &[Fault]) -> (Arc<Faulty>, crate::Database) {
-        let faulty = Arc::new(Faulty::default());
-        // Popped from the end, so reversed to apply in order.
-        *faulty.faults.lock().unwrap() = faults.iter().rev().copied().collect();
-        let store = Store {
-            inner: faulty.clone(),
-            prefix: Path::default(),
-            local_root: None,
-            cache: None,
-            namespace: "faulty".into(),
-            tags: TagSet::default(),
-            pid: std::process::id(),
-            reopen: None,
-        };
-        (faulty, crate::Database::new(store))
+    fn faulty(faults: &[Fault]) -> (Arc<FaultStore>, crate::Database) {
+        let store = FaultStore::scripted(faults);
+        let database = store.database();
+        (store, database)
     }
 
     async fn append(database: &crate::Database, id: u64) -> Result<crate::Manifest, Error> {

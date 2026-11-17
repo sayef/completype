@@ -35,6 +35,15 @@ Cloud tests run only when you point them at a bucket you own:
 COMPLETYPE_TEST_S3_URL=s3://your-bucket/completype-tests cargo test --release -p completype --features aws-credentials
 ```
 
+The simulation in `crates/completype/src/sim.rs` runs concurrent writers and compaction against a store that
+injects faults, and checks every version against a model. It runs 200 seeds by default; run more, or replay a
+failing one, with:
+
+```sh
+COMPLETYPE_SIM_SEEDS=5000 cargo test --release -p completype --features store sim::
+COMPLETYPE_SIM_SEED=14 cargo test -p completype --features store sim::
+```
+
 The documentation site is MkDocs with the Material theme:
 
 ```sh

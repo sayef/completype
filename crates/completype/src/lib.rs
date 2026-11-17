@@ -51,6 +51,8 @@ mod index;
 mod postings;
 mod search;
 mod segment;
+#[cfg(all(test, feature = "store"))]
+mod sim;
 mod staged;
 #[cfg(feature = "store")]
 mod store;

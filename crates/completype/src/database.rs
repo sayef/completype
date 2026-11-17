@@ -1240,10 +1240,19 @@ fn ambiguous(error: &Error) -> bool {
     }
 }
 
+/// A random draw below `n`; seeded when a simulation runs on this thread.
+fn jitter(n: u64) -> u64 {
+    #[cfg(test)]
+    if let Some(drawn) = crate::sim::draw(n) {
+        return drawn;
+    }
+    (uuid::Uuid::new_v4().as_u128() % u128::from(n)) as u64
+}
+
 /// Exponential backoff with full jitter, from 10 ms up to 1 s.
 async fn backoff(attempt: usize) {
     let cap = (10u64 << attempt.min(7)).min(1000);
-    let jitter = (uuid::Uuid::new_v4().as_u128() % u128::from(cap + 1)) as u64;
+    let jitter = jitter(cap + 1);
     tokio::time::sleep(Duration::from_millis(jitter)).await;
 }
 
