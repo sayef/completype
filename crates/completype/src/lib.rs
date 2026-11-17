@@ -127,6 +127,39 @@ impl Error {
     pub(crate) fn input(message: impl Into<String>) -> Self {
         Self::InvalidInput(message.into())
     }
+
+    /// The same kind of error, for each of several callers that share one failure.
+    pub(crate) fn duplicate(&self) -> Self {
+        match self {
+            Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
+            Self::Fst(e) => Self::Corrupt(e.to_string()),
+            Self::Corrupt(m) => Self::Corrupt(m.clone()),
+            Self::InvalidInput(m) => Self::InvalidInput(m.clone()),
+            Self::NotFound(m) => Self::NotFound(m.clone()),
+            Self::NamespaceNotFound { name, available } => Self::NamespaceNotFound {
+                name: name.clone(),
+                available: available.clone(),
+            },
+            Self::LayerNotFound {
+                namespace,
+                version,
+                name,
+                available,
+            } => Self::LayerNotFound {
+                namespace: namespace.clone(),
+                version: *version,
+                name: name.clone(),
+                available: available.clone(),
+            },
+            Self::Conflict(m) => Self::Conflict(m.clone()),
+            Self::OutcomeUnknown(m) => Self::OutcomeUnknown(m.clone()),
+            #[cfg(feature = "store")]
+            Self::Store(e) => Self::Store(object_store::Error::Generic {
+                store: "completype",
+                source: e.to_string().into(),
+            }),
+        }
+    }
 }
 
 impl std::fmt::Display for Error {

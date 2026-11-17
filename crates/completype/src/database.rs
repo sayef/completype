@@ -313,7 +313,7 @@ impl Database {
         self.default_namespace().compact_all(index, policy).await
     }
 
-    /// Deletes old manifests and segment files no retained manifest references.
+    /// Deletes old manifests, segment files no retained manifest references, and stale probes.
     ///
     /// Only objects older than `policy.older_than` by the store's clock are touched, which protects
     /// lagging readers and uploads of transactions that have not committed yet.
@@ -351,6 +351,14 @@ impl Database {
                 self.store.delete(&object.key).await?;
                 stats.segments_removed += 1;
                 stats.bytes_removed += object.size;
+            }
+        }
+        // Probe objects outlive a process that stopped between writing and deleting them.
+        for prefix in ["_probe", "_clock"] {
+            for object in self.store.list_objects(prefix).await? {
+                if object.modified_ms <= cutoff {
+                    self.store.delete(&object.key).await?;
+                }
             }
         }
         tracing::info!(
