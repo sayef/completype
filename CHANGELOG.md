@@ -21,6 +21,10 @@ All notable changes to this project are documented here. The format follows
   matches instead of only when nothing matches.
 - A long word corrected by splitting it is labelled `fuzzy`, not `prefix` or `infix`.
 - The crates.io and PyPI pages link to the documentation site.
+- A commit, lease or change set whose write landed but was reported as failed, or as already existing
+  because the store client retried it, counts once. Before, a commit could be applied twice or fail
+  with a conflict against itself. When a write's outcome cannot be read back, the commit raises the new
+  `OutcomeUnknown` error (`OutcomeUnknownError` in Python, a `StorageError`).
 
 ## [0.1.1](https://github.com/sayef/completype/releases/tag/v0.1.1) - 2026-10-15
 

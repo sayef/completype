@@ -92,6 +92,7 @@ fn to_py_err(e: completype_rs::Error) -> PyErr {
         completype_rs::Error::Io(_) | completype_rs::Error::Store(_) => "StorageError",
         completype_rs::Error::NotFound(_) => "NotFoundError",
         completype_rs::Error::Conflict(_) => "ConflictError",
+        completype_rs::Error::OutcomeUnknown(_) => "OutcomeUnknownError",
         completype_rs::Error::Corrupt(_) | completype_rs::Error::Fst(_) => "CorruptionError",
         completype_rs::Error::InvalidInput(_) => "InvalidInputError",
         _ => "CompletypeError",
