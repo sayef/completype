@@ -29,9 +29,3 @@ Open items: measurements still to make, and gaps the benchmarks show. Remove an 
 
 - **Queued writes for collections.** `completype.Client(..., writes="queued")` routing `add` and `delete`
   through the inbox and a lease-elected ingestor, for fleets of writers whose commits keep colliding.
-
-## Before the first release
-
-- Changelog.
-- Review the open Dependabot pull requests.
-- Check that CI passes once the repository is public, and deploy the docs from CI instead of by hand.

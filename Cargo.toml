@@ -9,7 +9,7 @@ rust-version = "1.94.1"
 license = "MIT"
 authors = ["Saiful Islam"]
 repository = "https://github.com/sayef/completype"
-homepage = "https://github.com/sayef/completype"
+homepage = "https://completype.pages.dev"
 
 [profile.release]
 lto = "thin"
