@@ -419,6 +419,21 @@ fn a_corrected_long_word_is_fuzzy_and_a_split_one_is_not() {
 }
 
 #[test]
+fn a_word_split_keeps_the_matches_the_query_has_as_typed() {
+    let index = Index::from_documents([
+        Document::new(1, "Deutsches Versicherungsrecht", 0.9),
+        Document::new(2, "Lebensversicherungsrecht", 0.8),
+        Document::new(3, "IEC", 0.7),
+        Document::new(4, "Indexbasierte Versicherung", 0.6),
+    ])
+    .unwrap();
+    // "versicherungsrec" splits into "versicherung iec", which matches nothing.
+    let hits = index.complete("versicherungsrec", 5);
+    assert_eq!(ids(&hits, |s| s.id), [1], "{hits:?}");
+    assert_eq!(hits[0].kind, MatchKind::Infix);
+}
+
+#[test]
 fn a_query_of_two_characters_is_not_corrected() {
     let index = Index::from_documents([
         Document::new(1, "C# (programming language)", 0.6).with_abbreviation("C#"),

@@ -1080,16 +1080,48 @@ impl Index {
                     self.lookup_compound(memo, q, 3, false).into_iter().next()
                 {
                     if phrase != q {
-                        let mut hits = self.raw_autocomplete(memo, &phrase, max_results, 1);
+                        let hits = self.raw_autocomplete(memo, &phrase, max_results, 1);
                         // Only split into words, the query matched as typed; otherwise it was corrected.
-                        if phrase.replace(' ', "") != q {
-                            hits.iter_mut().for_each(|h| h.kind = MatchKind::Fuzzy);
-                        }
-                        return hits;
+                        let corrected = phrase.replace(' ', "") != q;
+                        return merge_split(results, hits, corrected, max_results);
                     }
                 }
             }
         }
         results
     }
+}
+
+/// Adds the hits of a word split to the query's own: a plain split leads, a corrected one follows its direct matches.
+fn merge_split(
+    own: Vec<RawHit>,
+    mut split: Vec<RawHit>,
+    corrected: bool,
+    limit: usize,
+) -> Vec<RawHit> {
+    let (direct, fuzzy): (Vec<RawHit>, Vec<RawHit>) =
+        own.into_iter().partition(|h| h.kind != MatchKind::Fuzzy);
+    let mut merged = if corrected {
+        split.iter_mut().for_each(|h| h.kind = MatchKind::Fuzzy);
+        if let (Some(top), Some(floor)) = (
+            split.first().map(|h| h.score),
+            direct.iter().map(|h| h.score).reduce(f64::min),
+        ) {
+            if top > 0.0 {
+                let scale = (floor * 0.95 / top).min(1.0);
+                split.iter_mut().for_each(|h| h.score *= scale);
+            }
+        }
+        direct
+            .into_iter()
+            .chain(split)
+            .chain(fuzzy)
+            .collect::<Vec<_>>()
+    } else {
+        split.into_iter().chain(direct).chain(fuzzy).collect()
+    };
+    let mut seen = FxHashSet::default();
+    merged.retain(|h| seen.insert(h.doc));
+    merged.truncate(limit);
+    merged
 }
