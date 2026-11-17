@@ -377,7 +377,7 @@ impl Trie {
         // Node tails sorted by reversed bytes, grouped into unique tails in ascending order.
         let tail = |t: u32| node_tails[t as usize];
         let mut order: Vec<u32> = (0..node_tails.len() as u32).collect();
-        order.par_sort_unstable_by(|&a, &b| rev_cmp(tail(a), tail(b)));
+        crate::threads::global(|| order.par_sort_unstable_by(|&a, &b| rev_cmp(tail(a), tail(b))));
         let mut unique_of = vec![0u32; node_tails.len()];
         let mut unique: Vec<u32> = Vec::new();
         for &i in &order {

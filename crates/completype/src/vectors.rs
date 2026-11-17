@@ -247,7 +247,7 @@ thread_local! {
 /// Runs `f` inline (`threads == 1`), on rayon's global pool (`0`), or on a shared pool of `threads`.
 pub(crate) fn in_pool<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
     match threads {
-        0 => f(),
+        0 => crate::threads::global(f),
         1 => INLINE.with(|cell| {
             let pool = cell.get_or_init(|| {
                 rayon::ThreadPoolBuilder::new()
@@ -259,12 +259,20 @@ pub(crate) fn in_pool<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> 
             pool.install(f)
         }),
         n => {
-            static POOLS: OnceLock<Mutex<FxHashMap<usize, Arc<rayon::ThreadPool>>>> =
-                OnceLock::new();
-            let pool = POOLS
-                .get_or_init(Mutex::default)
+            // Pools per process: a forked child's copies have no threads, so they are leaked.
+            type Pools = (u32, FxHashMap<usize, Arc<rayon::ThreadPool>>);
+            static POOLS: OnceLock<Mutex<Pools>> = OnceLock::new();
+            let pid = std::process::id();
+            let mut pools = POOLS
+                .get_or_init(|| Mutex::new((pid, FxHashMap::default())))
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(|e| e.into_inner());
+            if pools.0 != pid {
+                std::mem::forget(std::mem::take(&mut pools.1));
+                pools.0 = pid;
+            }
+            let pool = pools
+                .1
                 .entry(n)
                 .or_insert_with(|| {
                     Arc::new(
@@ -275,6 +283,7 @@ pub(crate) fn in_pool<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> 
                     )
                 })
                 .clone();
+            drop(pools);
             pool.install(f)
         }
     }

@@ -43,7 +43,11 @@ pub(crate) fn exact_score(len: u16, single: bool, weight: f32, factor: f64) -> f
 }
 
 /// The 99th percentile of `scores()`, exactly; `scores` is called three times.
-pub(crate) fn max_score_of<I: ParallelIterator<Item = f64>>(scores: impl Fn() -> I) -> f64 {
+pub(crate) fn max_score_of<I: ParallelIterator<Item = f64>>(scores: impl Fn() -> I + Send) -> f64 {
+    crate::threads::global(|| max_score_in(scores))
+}
+
+fn max_score_in<I: ParallelIterator<Item = f64>>(scores: impl Fn() -> I) -> f64 {
     let scores = || scores().filter(|s| s.is_finite());
     let (count, lo, hi) = scores()
         .fold(

@@ -55,6 +55,7 @@ mod staged;
 #[cfg(feature = "store")]
 mod store;
 mod text;
+mod threads;
 mod trie;
 mod vectors;
 
