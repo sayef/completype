@@ -398,6 +398,27 @@ fn a_correction_in_one_layer_ranks_below_a_direct_match_in_another() {
 }
 
 #[test]
+fn a_corrected_long_word_is_fuzzy_and_a_split_one_is_not() {
+    let index = Index::from_documents([
+        Document::new(1, "PlayStation 5 Console", 0.9),
+        Document::new(2, "Bose QuietComfort Headphones", 0.7),
+        Document::new(3, "Playing Cards Deck", 0.5),
+    ])
+    .unwrap();
+    let kinds = |q: &str| -> Vec<(u64, MatchKind)> {
+        index
+            .complete(q, 5)
+            .iter()
+            .map(|s| (s.id, s.kind))
+            .collect()
+    };
+    assert_eq!(kinds("playstaton"), [(1, MatchKind::Fuzzy)]);
+    assert_eq!(kinds("headphnes"), [(2, MatchKind::Fuzzy)]);
+    assert_eq!(kinds("headphones"), [(2, MatchKind::Infix)]);
+    assert_eq!(kinds("playingcards"), [(3, MatchKind::Prefix)]);
+}
+
+#[test]
 fn a_query_of_two_characters_is_not_corrected() {
     let index = Index::from_documents([
         Document::new(1, "C# (programming language)", 0.6).with_abbreviation("C#"),

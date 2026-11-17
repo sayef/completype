@@ -1080,7 +1080,12 @@ impl Index {
                     self.lookup_compound(memo, q, 3, false).into_iter().next()
                 {
                     if phrase != q {
-                        return self.raw_autocomplete(memo, &phrase, max_results, 1);
+                        let mut hits = self.raw_autocomplete(memo, &phrase, max_results, 1);
+                        // Only split into words, the query matched as typed; otherwise it was corrected.
+                        if phrase.replace(' ', "") != q {
+                            hits.iter_mut().for_each(|h| h.kind = MatchKind::Fuzzy);
+                        }
+                        return hits;
                     }
                 }
             }
