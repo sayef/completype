@@ -56,7 +56,7 @@ tempfile = "3"
 async-trait = "0.1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 libc = "0.2"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
