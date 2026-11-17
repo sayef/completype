@@ -181,6 +181,7 @@ impl Database {
                 Segment::build_with(config, documents, deletes)?,
             ));
         }
+        self.store().check_create_only().await?;
         let key = format!("{INBOX}/{id}.batch");
         if !self
             .store()

@@ -373,17 +373,23 @@ impl Database {
         let prefix = format!("{LOCKS}/{name}");
         let current = self
             .store
-            .list(&prefix)
+            .list_objects(&prefix)
             .await?
-            .iter()
-            .filter_map(|k| parse_generation(&prefix, k))
+            .into_iter()
+            .filter_map(|o| Some((parse_generation(&prefix, &o.key)?, o.modified_ms)))
             .max();
-        if let Some(generation) = current {
+        if let Some((generation, modified_ms)) = current {
             match self.store.get(&lease_key(&prefix, generation)).await {
                 Ok(data) => {
                     let record: LeaseRecord = serde_json::from_slice(&data)
                         .map_err(|e| Error::Corrupt(format!("invalid lease: {e}")))?;
-                    if !record.released && record.expires_at_ms > now_ms() {
+                    let live = match record.ttl_ms {
+                        _ if record.released => false,
+                        // The store's clock, so a holder or taker with a fast clock cannot cut it short.
+                        Some(ttl) => self.store.now_ms().await? < modified_ms + ttl as i64,
+                        None => record.expires_at_ms > now_ms(),
+                    };
+                    if live {
                         return Ok(None);
                     }
                 }
@@ -396,7 +402,7 @@ impl Database {
             store: self.store.clone(),
             prefix,
             owner: owner.to_owned(),
-            generation: current.unwrap_or(0),
+            generation: current.map_or(0, |(generation, _)| generation),
             expires_at_ms: 0,
         };
         Ok(lease.advance(ttl, false).await?.then_some(lease))
@@ -928,6 +934,7 @@ impl Transaction {
             }
         }
         let store = &self.database.store;
+        store.check_create_only().await?;
         let mut refs = Vec::with_capacity(self.ops.len());
         for op in &self.ops {
             let Some(segment) = op.segment() else {
@@ -959,7 +966,7 @@ impl Transaction {
         let mut latest = self.read.clone();
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
-                backoff(attempt).await;
+                crate::store::backoff(attempt).await;
             }
             if let Some(ours) = self.landed(&mut uncertain, &commit_id).await? {
                 return Ok((ours, attempt));
@@ -1036,7 +1043,7 @@ impl Transaction {
             let mut read = None;
             for attempt in 0..OUTCOME_READS {
                 if attempt > 0 {
-                    backoff(attempt).await;
+                    crate::store::backoff(attempt).await;
                 }
                 match self.database.manifest(version).await {
                     Ok(manifest) => {
@@ -1222,7 +1229,7 @@ fn estimate_max_score(segment: &Arc<Segment>) -> Result<f64, Error> {
 }
 
 /// Reads of a version written with an unknown outcome before giving up with [`Error::OutcomeUnknown`].
-const OUTCOME_READS: usize = 8;
+const OUTCOME_READS: usize = 3;
 
 /// Whether a failed write may still have taken effect: anything but a definite rejection.
 fn ambiguous(error: &Error) -> bool {
@@ -1238,22 +1245,6 @@ fn ambiguous(error: &Error) -> bool {
         ),
         _ => false,
     }
-}
-
-/// A random draw below `n`; seeded when a simulation runs on this thread.
-fn jitter(n: u64) -> u64 {
-    #[cfg(test)]
-    if let Some(drawn) = crate::sim::draw(n) {
-        return drawn;
-    }
-    (uuid::Uuid::new_v4().as_u128() % u128::from(n)) as u64
-}
-
-/// Exponential backoff with full jitter, from 10 ms up to 1 s.
-async fn backoff(attempt: usize) {
-    let cap = (10u64 << attempt.min(7)).min(1000);
-    let jitter = jitter(cap + 1);
-    tokio::time::sleep(Duration::from_millis(jitter)).await;
 }
 
 /// The ids a JSON-list metadata entry records.
@@ -1277,8 +1268,12 @@ fn find_run(segments: &[SegmentRef], ids: &[String]) -> Option<usize> {
 #[derive(Serialize, Deserialize)]
 struct LeaseRecord {
     owner: String,
+    /// By the holder's clock; only for leases written before `ttl_ms`.
     expires_at_ms: u64,
     released: bool,
+    /// Lifetime from the lease object's modification time, by the store's clock.
+    #[serde(default)]
+    ttl_ms: Option<u64>,
 }
 
 fn lease_key(prefix: &str, generation: u64) -> String {
@@ -1296,8 +1291,8 @@ fn parse_generation(prefix: &str, key: &str) -> Option<u64> {
 /// An advisory, expiring lock, e.g. to run one writer or compactor at a time.
 ///
 /// Every acquire, renew and release creates the next generation file create-only, so exactly
-/// one contender wins it on any store. The generation is a fencing token. Expiry relies on
-/// roughly synchronised clocks; commits stay safe without the lease.
+/// one contender wins it on any store. The generation is a fencing token. Expiry is measured by
+/// the store's clock; commits stay safe without the lease.
 #[derive(Debug)]
 pub struct Lease {
     store: Store,
@@ -1330,8 +1325,10 @@ impl Lease {
             owner: self.owner.clone(),
             expires_at_ms,
             released,
+            ttl_ms: Some(ttl.as_millis() as u64),
         };
         let data = serde_json::to_vec(&record).expect("lease serialises");
+        self.store.check_create_only().await?;
         let next = self.generation + 1;
         if !self
             .store

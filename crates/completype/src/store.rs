@@ -35,6 +35,8 @@ pub struct Store {
     namespace: String,
     /// Tags on every object written, e.g. to select bucket lifecycle rules.
     tags: TagSet,
+    /// Whether the store refuses a second create-only write of one key, once checked.
+    create_only: Arc<std::sync::OnceLock<bool>>,
 }
 
 impl Store {
@@ -94,6 +96,7 @@ impl Store {
             cache: None,
             namespace,
             tags: TagSet::default(),
+            create_only: Arc::default(),
         })
     }
 
@@ -108,6 +111,7 @@ impl Store {
             tags: TagSet::default(),
             pid: std::process::id(),
             reopen: None,
+            create_only: Arc::default(),
         }
     }
 
@@ -124,6 +128,7 @@ impl Store {
             cache: None,
             namespace: String::new(),
             tags: TagSet::default(),
+            create_only: Arc::default(),
         })
     }
 
@@ -146,14 +151,10 @@ impl Store {
     }
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>, Error> {
-        Ok(self
-            .client()
-            .await?
-            .get(&self.path(key))
-            .await?
-            .bytes()
-            .await?
-            .to_vec())
+        let client = self.client().await?;
+        let path = self.path(key);
+        let bytes = retry(|| async { client.get(&path).await?.bytes().await }).await?;
+        Ok(bytes.to_vec())
     }
 
     /// Tags every object this store writes from now on; S3 and Azure keep them, other stores ignore them.
@@ -179,10 +180,9 @@ impl Store {
             tags: self.tags.clone(),
             ..PutOptions::default()
         };
-        self.client()
-            .await?
-            .put_opts(&self.path(key), PutPayload::from(data), options)
-            .await?;
+        let client = self.client().await?;
+        let (path, payload) = (self.path(key), PutPayload::from(data));
+        retry(|| client.put_opts(&path, payload.clone(), options.clone())).await?;
         Ok(())
     }
 
@@ -224,8 +224,30 @@ impl Store {
         }
     }
 
+    /// Fails unless the store refuses a second create-only write of one key, as every commit,
+    /// lease and change set relies on. Checked once per store.
+    pub(crate) async fn check_create_only(&self) -> Result<(), Error> {
+        if self.create_only.get().is_none() {
+            let key = format!("_probe/{}", uuid::Uuid::new_v4().simple());
+            let first = self.put_unique_if_absent(&key, b"first".to_vec()).await?;
+            let second = self.put_if_absent(&key, b"second".to_vec()).await?;
+            let _ = self.delete(&key).await;
+            let _ = self.create_only.set(first && !second);
+        }
+        if self.create_only.get() == Some(&true) {
+            Ok(())
+        } else {
+            Err(Error::input(
+                "the store does not enforce create-only writes (If-None-Match), so concurrent \
+                 writers could overwrite each other; completype does not write to it",
+            ))
+        }
+    }
+
     pub async fn delete(&self, key: &str) -> Result<(), Error> {
-        self.client().await?.delete(&self.path(key)).await?;
+        let client = self.client().await?;
+        let path = self.path(key);
+        retry(|| client.delete(&path)).await?;
         Ok(())
     }
 
@@ -260,8 +282,9 @@ impl Store {
 
     /// Keys under `prefix` with their size and modification time, sorted by key.
     pub async fn list_objects(&self, prefix: &str) -> Result<Vec<ObjectInfo>, Error> {
-        let listing = self.client().await?.list(Some(&self.path(prefix)));
-        self.collect(listing).await
+        let client = self.client().await?;
+        let path = self.path(prefix);
+        self.collect(|| client.list(Some(&path))).await
     }
 
     /// Like [`Store::list_objects`], but only keys sorting after `after`.
@@ -270,21 +293,20 @@ impl Store {
         prefix: &str,
         after: &str,
     ) -> Result<Vec<ObjectInfo>, Error> {
-        let listing = self
-            .client()
-            .await?
-            .list_with_offset(Some(&self.path(prefix)), &self.path(after));
-        self.collect(listing).await
+        let client = self.client().await?;
+        let (path, after) = (self.path(prefix), self.path(after));
+        self.collect(|| client.list_with_offset(Some(&path), &after))
+            .await
     }
 
     async fn collect(
         &self,
-        listing: futures::stream::BoxStream<
+        listing: impl Fn() -> futures::stream::BoxStream<
             'static,
             object_store::Result<object_store::ObjectMeta>,
         >,
     ) -> Result<Vec<ObjectInfo>, Error> {
-        let metas: Vec<_> = listing.try_collect().await?;
+        let metas: Vec<_> = retry(|| listing().try_collect::<Vec<_>>()).await?;
         let prefix = self.prefix.as_ref();
         // Keys not strictly under the prefix, such as a console-created folder marker, are skipped.
         let relative = |location: &str| match prefix {
@@ -313,10 +335,9 @@ impl Store {
     pub async fn now_ms(&self) -> Result<i64, Error> {
         let key = format!("_clock/{}", uuid::Uuid::new_v4().simple());
         self.put(&key, Vec::new()).await?;
-        let modified = self
-            .client()
-            .await?
-            .head(&self.path(&key))
+        let client = self.client().await?;
+        let path = self.path(&key);
+        let modified = retry(|| client.head(&path))
             .await?
             .last_modified
             .timestamp_millis();
@@ -352,7 +373,9 @@ impl Store {
         let Some(cache) = &self.cache else {
             return Segment::from_bytes(self.get(key).await?);
         };
-        let meta = self.client().await?.head(&self.path(key)).await?;
+        let client = self.client().await?;
+        let path = self.path(key);
+        let meta = retry(|| client.head(&path)).await?;
         let tag: String = meta
             .e_tag
             .as_deref()
@@ -453,6 +476,61 @@ impl Store {
 }
 
 /// Runs a future to completion on completype's internal runtime. Do not call from async code.
+/// Attempts of a read, listing, delete or plain write before its error is returned.
+const ATTEMPTS: usize = 5;
+
+/// Whether `error` may pass on a retry: anything but a missing object or a definite answer.
+fn transient(error: &object_store::Error) -> bool {
+    !matches!(
+        error,
+        object_store::Error::NotFound { .. }
+            | object_store::Error::AlreadyExists { .. }
+            | object_store::Error::Precondition { .. }
+            | object_store::Error::NotModified { .. }
+            | object_store::Error::PermissionDenied { .. }
+            | object_store::Error::Unauthenticated { .. }
+            | object_store::Error::NotSupported { .. }
+            | object_store::Error::NotImplemented { .. }
+            | object_store::Error::InvalidPath { .. }
+            | object_store::Error::UnknownConfigurationKey { .. }
+    )
+}
+
+/// Runs a request again after transient errors. Never used for create-only writes, whose
+/// outcome after an error the caller must read back instead.
+async fn retry<T, F, Fut>(mut request: F) -> object_store::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = object_store::Result<T>>,
+{
+    let mut attempt = 0;
+    loop {
+        match request().await {
+            Err(e) if transient(&e) && attempt + 1 < ATTEMPTS => {
+                attempt += 1;
+                tracing::debug!(attempt, error = %e, "retrying a store request");
+                backoff(attempt).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A random draw below `n`; seeded when a simulation runs on this thread.
+fn jitter(n: u64) -> u64 {
+    #[cfg(test)]
+    if let Some(drawn) = crate::sim::draw(n) {
+        return drawn;
+    }
+    (uuid::Uuid::new_v4().as_u128() % u128::from(n)) as u64
+}
+
+/// Exponential backoff with full jitter, from 10 ms up to 1 s.
+pub(crate) async fn backoff(attempt: usize) {
+    let cap = (10u64 << attempt.min(7)).min(1000);
+    tokio::time::sleep(std::time::Duration::from_millis(jitter(cap + 1))).await;
+}
+
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     runtime().block_on(future)
 }
@@ -775,9 +853,12 @@ mod tests {
 
     use crate::sim::{Fault, FaultStore};
 
-    fn faulty(faults: &[Fault]) -> (Arc<FaultStore>, crate::Database) {
-        let store = FaultStore::scripted(faults);
+    /// A database whose store passed its create-only check, then faults on the next writes.
+    async fn faulty(faults: &[Fault]) -> (Arc<FaultStore>, crate::Database) {
+        let store = Arc::new(FaultStore::default());
         let database = store.database();
+        database.store().check_create_only().await.unwrap();
+        store.script(faults);
         (store, database)
     }
 
@@ -791,7 +872,7 @@ mod tests {
     #[tokio::test]
     async fn a_commit_whose_write_landed_but_failed_or_conflicted_counts_once() {
         for fault in [Fault::LandThenFail, Fault::LandThenExists] {
-            let (_, database) = faulty(&[fault]);
+            let (_, database) = faulty(&[fault]).await;
             let manifest = append(&database, 1).await.unwrap();
             assert_eq!(manifest.version, 1, "{fault:?}");
             assert_eq!(database.versions().await.unwrap(), [1], "{fault:?}");
@@ -802,14 +883,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_commit_whose_write_failed_before_landing_is_retried() {
-        let (_, database) = faulty(&[Fault::FailBefore, Fault::FailBefore]);
+        let (_, database) = faulty(&[Fault::FailBefore, Fault::FailBefore]).await;
         let manifest = append(&database, 1).await.unwrap();
         assert_eq!(database.versions().await.unwrap(), [manifest.version]);
     }
 
     #[tokio::test]
     async fn a_commit_that_cannot_be_read_back_reports_its_outcome_unknown() {
-        let (faulty, database) = faulty(&[Fault::LandThenFail]);
+        let (faulty, database) = faulty(&[Fault::LandThenFail]).await;
         let mut txn = database.begin().await.unwrap();
         txn.append_documents("songs", [Document::new(1, "Rust", 0.5)], [])
             .unwrap();
@@ -822,7 +903,7 @@ mod tests {
 
     #[tokio::test]
     async fn leases_and_change_sets_whose_write_landed_but_conflicted_succeed() {
-        let (_, database) = faulty(&[Fault::LandThenExists, Fault::LandThenExists]);
+        let (_, database) = faulty(&[Fault::LandThenExists, Fault::LandThenExists]).await;
         let lease = database
             .acquire_lease("ingestor", "me", std::time::Duration::from_secs(60))
             .await
@@ -831,6 +912,64 @@ mod tests {
         let mut changes = crate::ChangeSet::new();
         changes.upsert("songs", [Document::new(2, "Go", 0.5)]);
         database.submit(changes).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reads_that_fail_now_and_then_are_retried() {
+        let (store, database) = faulty(&[]).await;
+        append(&database, 1).await.unwrap();
+        store
+            .read_faults
+            .store(ATTEMPTS - 1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(database.latest().await.unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn a_store_that_ignores_create_only_writes_is_not_written_to() {
+        let store = Arc::new(FaultStore::default());
+        store
+            .ignore_create
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let database = store.database();
+        let error = append(&database, 1).await.unwrap_err();
+        assert!(error.to_string().contains("create-only"), "{error}");
+        let lease = database
+            .acquire_lease("ingestor", "me", std::time::Duration::from_secs(60))
+            .await;
+        assert!(lease.is_err());
+        assert!(database.versions().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_lease_expires_by_the_store_clock_not_the_holder_clock() {
+        let (_, database) = faulty(&[]).await;
+        let key = "_locks/ingestor/00000000000000000001.json";
+        // Written by a holder whose clock runs an hour fast.
+        let fast = crate::database::now_ms() + 3_600_000;
+        let record = |ttl: &str| {
+            format!(r#"{{"owner":"fast","expires_at_ms":{fast},"released":false{ttl}}}"#)
+                .into_bytes()
+        };
+        database
+            .store()
+            .put(key, record(r#","ttl_ms":1"#))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let taken = database
+            .acquire_lease("ingestor", "me", std::time::Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(taken.map(|l| l.generation()), Some(2));
+
+        // A lease written before ttl_ms keeps its holder's expiry.
+        let key = "_locks/legacy/00000000000000000001.json";
+        database.store().put(key, record("")).await.unwrap();
+        let held = database
+            .acquire_lease("legacy", "me", std::time::Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(held.is_none());
     }
 
     #[tokio::test]
@@ -845,6 +984,7 @@ mod tests {
             cache: None,
             namespace: "recording".into(),
             tags: TagSet::default(),
+            create_only: Arc::default(),
         }
         .with_tags([
             ("LifecycleRule", "KeepForever"),

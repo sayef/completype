@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -73,15 +73,17 @@ pub(crate) struct FaultStore {
     script: Mutex<Vec<Fault>>,
     random: Mutex<Option<Rng>>,
     pub(crate) failing_reads: AtomicBool,
+    /// Reads still to fail, each once.
+    pub(crate) read_faults: AtomicUsize,
+    /// Treats create-only writes as plain ones, as some S3-compatible stores do.
+    pub(crate) ignore_create: AtomicBool,
     trace: Mutex<Vec<String>>,
 }
 
 impl FaultStore {
     /// Faults applied to the next create-only writes, in order.
-    pub(crate) fn scripted(faults: &[Fault]) -> Arc<Self> {
-        let store = Self::default();
-        *store.script.lock().unwrap() = faults.iter().rev().copied().collect();
-        Arc::new(store)
+    pub(crate) fn script(&self, faults: &[Fault]) {
+        *self.script.lock().unwrap() = faults.iter().rev().copied().collect();
     }
 
     pub(crate) fn random(seed: u64) -> Arc<Self> {
@@ -122,10 +124,9 @@ impl FaultStore {
     fn record(&self, op: &str, location: &Path) {
         // Segment names are random; only their kind matters for replay.
         let key = location.as_ref();
-        let key = if key.starts_with("segments/") {
-            "segments/*"
-        } else {
-            key
+        let key = match key.split_once('/') {
+            Some((kind @ ("segments" | "_probe" | "_clock"), _)) => format!("{kind}/*"),
+            _ => key.to_owned(),
         };
         self.trace.lock().unwrap().push(format!("{op} {key}"));
     }
@@ -166,9 +167,12 @@ impl ObjectStore for FaultStore {
         &self,
         location: &Path,
         payload: PutPayload,
-        opts: PutOptions,
+        mut opts: PutOptions,
     ) -> object_store::Result<object_store::PutResult> {
         self.stall().await;
+        if self.ignore_create.load(Ordering::SeqCst) {
+            opts.mode = PutMode::Overwrite;
+        }
         self.record("put", location);
         match self.next_fault(matches!(opts.mode, PutMode::Create)) {
             None => self.inner.put_opts(location, payload, opts).await,
@@ -201,7 +205,9 @@ impl ObjectStore for FaultStore {
     ) -> object_store::Result<object_store::GetResult> {
         self.stall().await;
         self.record("get", location);
-        if self.failing_reads.load(Ordering::SeqCst) || self.roll(4) {
+        let scripted = self.read_faults.load(Ordering::SeqCst) > 0
+            && self.read_faults.fetch_sub(1, Ordering::SeqCst) > 0;
+        if scripted || self.failing_reads.load(Ordering::SeqCst) || self.roll(4) {
             return Err(Self::error());
         }
         self.inner.get_opts(location, options).await
