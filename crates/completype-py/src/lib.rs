@@ -1209,8 +1209,11 @@ fn layered_options(
     limit: usize,
     contexts: Option<Vec<String>>,
     ignore_missing_layers: bool,
+    layer_weights: Option<Vec<f64>>,
 ) -> completype_rs::SearchOptions {
-    search_options(limit, contexts).ignore_missing_layers(ignore_missing_layers)
+    search_options(limit, contexts)
+        .ignore_missing_layers(ignore_missing_layers)
+        .layer_weights(layer_weights.unwrap_or_default())
 }
 
 fn ns_complete(
@@ -1363,7 +1366,8 @@ impl Engine {
     }
 
     /// `Namespace.complete` in the default namespace.
-    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
         py: Python<'_>,
@@ -1372,13 +1376,15 @@ impl Engine {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<Suggestion>> {
         self.follow();
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_complete(py, &self.engine.default_namespace(), query, layers, options)
     }
 
-    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn complete_aliases(
         &self,
         py: Python<'_>,
@@ -1387,13 +1393,15 @@ impl Engine {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<AliasSuggestion>> {
         self.follow();
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_complete_aliases(py, &self.engine.default_namespace(), query, layers, options)
     }
 
-    #[pyo3(signature = (vector, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (vector, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn vector_search(
         &self,
         py: Python<'_>,
@@ -1402,9 +1410,10 @@ impl Engine {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<Suggestion>> {
         self.follow();
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_vector_search(
             py,
             &self.engine.default_namespace(),
@@ -1414,7 +1423,7 @@ impl Engine {
         )
     }
 
-    #[pyo3(signature = (text, vector, layers, limit = 10, *, fusion = "rrf", rrf_k = 60.0, semantic_weight = 0.5, candidates = None, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (text, vector, layers, limit = 10, *, fusion = "rrf", rrf_k = 60.0, semantic_weight = 0.5, candidates = None, contexts = None, ignore_missing_layers = false, layer_weights = None))]
     #[allow(clippy::too_many_arguments)]
     fn hybrid_search(
         &self,
@@ -1429,10 +1438,12 @@ impl Engine {
         candidates: Option<usize>,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<HybridSuggestion>> {
         self.follow();
         let options = hybrid_options(fusion, rrf_k, semantic_weight, candidates, contexts)?
-            .ignore_missing_layers(ignore_missing_layers);
+            .ignore_missing_layers(ignore_missing_layers)
+            .layer_weights(layer_weights.unwrap_or_default());
         let ns = self.engine.default_namespace();
         ns_hybrid_search(py, &ns, text, vector, layers, limit, options)
     }
@@ -1467,7 +1478,8 @@ impl Namespace {
 
     /// Completes over `layers` in order, later layers overriding earlier ones per document id. A
     /// missing layer raises `LayerNotFoundError` unless `ignore_missing_layers`.
-    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
         py: Python<'_>,
@@ -1476,12 +1488,14 @@ impl Namespace {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<Suggestion>> {
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_complete(py, &self.0, query, layers, options)
     }
 
-    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (query, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn complete_aliases(
         &self,
         py: Python<'_>,
@@ -1490,12 +1504,14 @@ impl Namespace {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<AliasSuggestion>> {
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_complete_aliases(py, &self.0, query, layers, options)
     }
 
-    #[pyo3(signature = (vector, layers, limit = 10, *, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (vector, layers, limit = 10, *, contexts = None, ignore_missing_layers = false, layer_weights = None))]
+    #[allow(clippy::too_many_arguments)]
     fn vector_search(
         &self,
         py: Python<'_>,
@@ -1504,12 +1520,13 @@ impl Namespace {
         limit: usize,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<Suggestion>> {
-        let options = layered_options(limit, contexts, ignore_missing_layers);
+        let options = layered_options(limit, contexts, ignore_missing_layers, layer_weights);
         ns_vector_search(py, &self.0, vector, layers, options)
     }
 
-    #[pyo3(signature = (text, vector, layers, limit = 10, *, fusion = "rrf", rrf_k = 60.0, semantic_weight = 0.5, candidates = None, contexts = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (text, vector, layers, limit = 10, *, fusion = "rrf", rrf_k = 60.0, semantic_weight = 0.5, candidates = None, contexts = None, ignore_missing_layers = false, layer_weights = None))]
     #[allow(clippy::too_many_arguments)]
     fn hybrid_search(
         &self,
@@ -1524,9 +1541,11 @@ impl Namespace {
         candidates: Option<usize>,
         contexts: Option<Vec<String>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<HybridSuggestion>> {
         let options = hybrid_options(fusion, rrf_k, semantic_weight, candidates, contexts)?
-            .ignore_missing_layers(ignore_missing_layers);
+            .ignore_missing_layers(ignore_missing_layers)
+            .layer_weights(layer_weights.unwrap_or_default());
         ns_hybrid_search(py, &self.0, text, vector, layers, limit, options)
     }
 
@@ -2802,7 +2821,7 @@ impl Collection {
     /// `layers` are collections searched on top of this one, later ones overriding per document id;
     /// `vector` is an embedding of the query, for results ranked by meaning as well. A layer that
     /// does not exist raises `LayerNotFoundError` unless `ignore_missing_layers`.
-    #[pyo3(signature = (query, limit = 10, *, aliases = false, layers = None, contexts = None, vector = None, ignore_missing_layers = false))]
+    #[pyo3(signature = (query, limit = 10, *, aliases = false, layers = None, contexts = None, vector = None, ignore_missing_layers = false, layer_weights = None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -2814,6 +2833,7 @@ impl Collection {
         contexts: Option<Vec<String>>,
         vector: Option<&Bound<'_, PyAny>>,
         ignore_missing_layers: bool,
+        layer_weights: Option<Vec<f64>>,
     ) -> PyResult<Vec<Suggestion>> {
         let vector = vector.map(|v| query_vector(py, v)).transpose()?;
         let options = completype_rs::Query::default()
@@ -2822,6 +2842,7 @@ impl Collection {
             .layers(layers.unwrap_or_default())
             .contexts(contexts.unwrap_or_default())
             .ignore_missing_layers(ignore_missing_layers)
+            .layer_weights(layer_weights.unwrap_or_default())
             .vector(vector);
         let hits = py
             .detach(|| self.0.complete(query, &options))

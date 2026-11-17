@@ -129,6 +129,8 @@ pub struct Query {
     pub contexts: Vec<String>,
     /// Search a layer that does not exist as empty instead of failing.
     pub ignore_missing_layers: bool,
+    /// Multipliers for each collection's scores: this one's, then each of `layers`; missing ones are 1.
+    pub layer_weights: Vec<f64>,
     /// An embedding of the query, for results ranked by meaning as well as by text.
     pub vector: Option<Vec<f32>>,
 }
@@ -141,6 +143,7 @@ impl Default for Query {
             layers: Vec::new(),
             contexts: Vec::new(),
             ignore_missing_layers: false,
+            layer_weights: Vec::new(),
             vector: None,
         }
     }
@@ -152,6 +155,7 @@ crate::setters!(Query {
     layers: Vec<String>,
     contexts: Vec<String>,
     ignore_missing_layers: bool,
+    layer_weights: Vec<f64>,
     vector: Option<Vec<f32>>,
 });
 
@@ -571,6 +575,7 @@ impl Collection {
             .iter()
             .map(|n| namespace.as_ref().and_then(|ns| ns.get(n)))
             .collect();
+        crate::search::validate_layer_weights(&query.layer_weights, names.len())?;
         // The collection itself is empty until its first write is synced; other layers must exist.
         if !query.ignore_missing_layers {
             if let Some(missing) = (1..names.len()).find(|&i| held[i].is_none()) {
@@ -583,11 +588,15 @@ impl Collection {
             }
         }
         let layers: Vec<Option<&Index>> = held.iter().map(|i| i.as_deref()).collect();
-        let search = SearchOptions::new(query.limit).contexts(query.contexts.iter().cloned());
+        let search = SearchOptions::new(query.limit)
+            .contexts(query.contexts.iter().cloned())
+            .layer_weights(query.layer_weights.iter().copied());
         let overfetch = self.inner.engine.overfetch();
         let mut out: Vec<Completion> = match &query.vector {
             Some(vector) => {
-                let options = HybridOptions::default().contexts(query.contexts.iter().cloned());
+                let options = HybridOptions::default()
+                    .contexts(query.contexts.iter().cloned())
+                    .layer_weights(query.layer_weights.iter().copied());
                 crate::engine::layered_hybrid_search(
                     &layers,
                     text,

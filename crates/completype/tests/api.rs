@@ -226,6 +226,48 @@ fn a_small_layer_scores_on_the_scale_of_the_first() {
 }
 
 #[test]
+fn layer_weights_scale_a_layer_and_default_to_the_common_scale() {
+    let engine = Engine::new();
+    engine.publish([
+        (
+            "shared".to_owned(),
+            Some(Arc::new(
+                Index::from_documents([Document::new(1, "Data Science", 0.9)]).unwrap(),
+            )),
+        ),
+        (
+            "own".to_owned(),
+            Some(Arc::new(
+                Index::from_documents([Document::new(2, "Data Stewardship", 0.3)]).unwrap(),
+            )),
+        ),
+    ]);
+    let layers = ["shared", "own"];
+    let ids = |options: SearchOptions| -> Vec<u64> {
+        let hits = engine.complete_with(&layers, "data s", &options).unwrap();
+        hits.iter().map(|h| h.suggestion.id).collect()
+    };
+    let plain = engine.complete(&layers, "data s", 10).unwrap();
+    let unit = engine
+        .complete_with(
+            &layers,
+            "data s",
+            &SearchOptions::new(10).layer_weights([1.0, 1.0]),
+        )
+        .unwrap();
+    assert_eq!(plain, unit);
+    assert_eq!(ids(SearchOptions::new(10)), [1, 2]);
+    assert_eq!(
+        ids(SearchOptions::new(10).layer_weights([1.0, 10.0])),
+        [2, 1]
+    );
+    for bad in [vec![0.0], vec![-1.0], vec![f64::NAN], vec![1.0, 1.0, 1.0]] {
+        let options = SearchOptions::new(10).layer_weights(bad);
+        assert!(engine.complete_with(&layers, "data s", &options).is_err());
+    }
+}
+
+#[test]
 fn an_exact_title_comes_first_among_many_longer_ones() {
     let index = Index::from_documents(
         (0..20_000u64).map(|i| Document::new(i, format!("product {i}"), 0.5)),

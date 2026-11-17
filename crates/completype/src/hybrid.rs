@@ -38,6 +38,8 @@ pub struct HybridOptions {
     pub contexts: Vec<String>,
     /// In layered searches, search a layer whose index does not exist as empty instead of failing.
     pub ignore_missing_layers: bool,
+    /// In layered searches, multipliers for each layer's scores, in layer order; missing ones are 1.
+    pub layer_weights: Vec<f64>,
 }
 
 impl HybridOptions {
@@ -61,10 +63,16 @@ impl HybridOptions {
         self
     }
 
+    pub fn layer_weights(mut self, weights: impl IntoIterator<Item = f64>) -> Self {
+        self.layer_weights = weights.into_iter().collect();
+        self
+    }
+
     pub(crate) fn search_options(&self, limit: usize) -> crate::SearchOptions {
         crate::SearchOptions::new(self.candidate_count(limit))
             .contexts(self.contexts.clone())
             .ignore_missing_layers(self.ignore_missing_layers)
+            .layer_weights(self.layer_weights.iter().copied())
     }
 
     pub(crate) fn candidate_count(&self, limit: usize) -> usize {

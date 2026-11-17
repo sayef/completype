@@ -254,6 +254,7 @@ impl Namespace {
         layers: &[impl AsRef<str>],
         options: &SearchOptions,
     ) -> Result<Vec<Option<&Index>>, Error> {
+        crate::search::validate_layer_weights(options.layer_weight_list(), layers.len())?;
         layers
             .iter()
             .map(|layer| match self.snapshot.indexes.get(layer.as_ref()) {
@@ -399,10 +400,11 @@ pub fn layered_complete(
     let fetch = fetch(layers.len(), options, overfetch);
     let per_layer = layers
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(i, l)| {
             l.map(|index| {
                 let mut hits = index.complete_with(query, &fetch);
-                let scale = common_scale(layers, index);
+                let scale = common_scale(layers, index) * options.layer_weight(i);
                 hits.iter_mut().for_each(|s| s.score *= scale);
                 hits
             })
@@ -423,10 +425,11 @@ pub fn layered_complete_aliases(
     let fetch = fetch(layers.len(), options, overfetch);
     let per_layer = layers
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(i, l)| {
             l.map(|index| {
                 let mut hits = index.complete_aliases_with(query, &fetch);
-                let scale = common_scale(layers, index);
+                let scale = common_scale(layers, index) * options.layer_weight(i);
                 hits.iter_mut().for_each(|s| s.score *= scale);
                 hits
             })
@@ -446,11 +449,14 @@ pub fn layered_vector_search(
 ) -> Result<Vec<LayeredSuggestion<Suggestion>>, Error> {
     let fetch = fetch(layers.len(), options, overfetch);
     let mut per_layer = Vec::with_capacity(layers.len());
-    for index in layers {
-        per_layer.push(match index {
+    for (i, index) in layers.iter().enumerate() {
+        let mut hits = match index {
             Some(index) => index.vector_search_with(query, &fetch)?,
             None => Vec::new(),
-        });
+        };
+        let weight = options.layer_weight(i);
+        hits.iter_mut().for_each(|s| s.score *= weight);
+        per_layer.push(hits);
     }
     Ok(merge(layers, per_layer, options.limit, |s: &Suggestion| {
         (s.id, false, s.score)

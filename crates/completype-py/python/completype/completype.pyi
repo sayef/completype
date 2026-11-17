@@ -216,6 +216,7 @@ class Namespace:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[Suggestion]:
         """Later layers override earlier ones per document id; a missing layer raises `LayerNotFoundError`."""
     def complete_aliases(
@@ -226,6 +227,7 @@ class Namespace:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[AliasSuggestion]: ...
     def vector_search(
         self,
@@ -235,6 +237,7 @@ class Namespace:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[Suggestion]: ...
     def hybrid_search(
         self,
@@ -249,6 +252,7 @@ class Namespace:
         candidates: int | None = None,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[HybridSuggestion]: ...
 
 class Engine:
@@ -274,6 +278,7 @@ class Engine:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[Suggestion]:
         """`Namespace.complete` in the default namespace."""
     def complete_aliases(
@@ -284,6 +289,7 @@ class Engine:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[AliasSuggestion]: ...
     def vector_search(
         self,
@@ -293,6 +299,7 @@ class Engine:
         *,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[Suggestion]: ...
     def hybrid_search(
         self,
@@ -307,6 +314,7 @@ class Engine:
         candidates: int | None = None,
         contexts: Sequence[str] | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[HybridSuggestion]: ...
 
 class Store:
@@ -528,6 +536,7 @@ class Collection:
         contexts: Sequence[str] | None = None,
         vector: Vector | None = None,
         ignore_missing_layers: bool = False,
+        layer_weights: Sequence[float] | None = None,
     ) -> list[Suggestion]:
         """Completions, best first; `Suggestion.layer` is the collection each came from."""
     def optimize(self) -> int | None: ...

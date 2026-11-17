@@ -72,7 +72,23 @@ pub struct SearchOptions {
     pub contexts: Vec<String>,
     /// In layered searches, search a layer whose index does not exist as empty instead of failing.
     pub ignore_missing_layers: bool,
+    layer_weights: LayerWeights,
 }
+
+/// Compared by bit pattern, so that `SearchOptions` stays `Eq`.
+#[derive(Clone, Debug, Default)]
+struct LayerWeights(Vec<f64>);
+
+impl PartialEq for LayerWeights {
+    fn eq(&self, other: &Self) -> bool {
+        self.0
+            .iter()
+            .map(|w| w.to_bits())
+            .eq(other.0.iter().map(|w| w.to_bits()))
+    }
+}
+
+impl Eq for LayerWeights {}
 
 impl Default for SearchOptions {
     fn default() -> Self {
@@ -86,6 +102,7 @@ impl SearchOptions {
             limit,
             contexts: Vec::new(),
             ignore_missing_layers: false,
+            layer_weights: LayerWeights::default(),
         }
     }
 
@@ -103,6 +120,36 @@ impl SearchOptions {
         self.contexts = contexts.into_iter().map(Into::into).collect();
         self
     }
+
+    /// In layered searches, multipliers for each layer's scores, in layer order; missing ones are 1.
+    pub fn layer_weights(mut self, weights: impl IntoIterator<Item = f64>) -> Self {
+        self.layer_weights = LayerWeights(weights.into_iter().collect());
+        self
+    }
+
+    pub(crate) fn layer_weight(&self, layer: usize) -> f64 {
+        self.layer_weights.0.get(layer).copied().unwrap_or(1.0)
+    }
+
+    pub(crate) fn layer_weight_list(&self) -> &[f64] {
+        &self.layer_weights.0
+    }
+}
+
+/// Checks that `weights` has at most one finite, positive weight per layer.
+pub(crate) fn validate_layer_weights(weights: &[f64], layers: usize) -> Result<(), crate::Error> {
+    if weights.len() > layers {
+        return Err(crate::Error::input(format!(
+            "{} layer weights given for {layers} layers",
+            weights.len()
+        )));
+    }
+    if weights.iter().any(|w| !(w.is_finite() && *w > 0.0)) {
+        return Err(crate::Error::input(
+            "layer weights must be finite and positive",
+        ));
+    }
+    Ok(())
 }
 
 /// Cached short-query results keep `f32` scores, as the precomputed tables they replace did.
