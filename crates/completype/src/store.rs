@@ -535,6 +535,14 @@ pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     runtime().block_on(future)
 }
 
+/// Runs `future` on the library's own runtime.
+pub(crate) fn spawn<F>(future: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    runtime().spawn(future);
+}
+
 /// This process's runtime. A forked child starts its own, as the parent's threads are gone; the
 /// parent's copy is leaked, since dropping it would wait for them.
 fn runtime() -> &'static tokio::runtime::Runtime {

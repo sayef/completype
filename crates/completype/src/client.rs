@@ -205,6 +205,56 @@ struct Inner {
     engine: Engine,
     sync_every: Option<Duration>,
     state: Mutex<State>,
+    /// Writes waiting to join the next commit of their namespace.
+    groups: Mutex<FxHashMap<String, Group>>,
+}
+
+/// Writes of one namespace queued while its commit task runs.
+#[derive(Default)]
+struct Group {
+    queue: Vec<Pending>,
+    /// The process whose task commits them; a forked child starts its own.
+    committer: Option<u32>,
+}
+
+struct Pending {
+    collection: String,
+    segment: crate::Segment,
+    done: futures::channel::oneshot::Sender<Result<u64, Error>>,
+}
+
+/// Most writes folded into one commit.
+const MAX_GROUP: usize = 256;
+
+/// Commits the namespace's queued writes, as many as are waiting, one commit at a time.
+async fn commit_groups(inner: Arc<Inner>, namespace: String) {
+    loop {
+        let batch: Vec<Pending> = {
+            let mut groups = inner.groups.lock().unwrap_or_else(|e| e.into_inner());
+            let group = groups.entry(namespace.clone()).or_default();
+            if group.queue.is_empty() {
+                group.committer = None;
+                return;
+            }
+            let take = group.queue.len().min(MAX_GROUP);
+            group.queue.drain(..take).collect()
+        };
+        let mut done = Vec::with_capacity(batch.len());
+        let result = async {
+            let mut txn = inner.database.namespace(&namespace)?.begin().await?;
+            for pending in batch {
+                txn.append(&pending.collection, pending.segment);
+                done.push(pending.done);
+            }
+            let version = txn.commit().await?.version;
+            inner.sync().await?;
+            Ok(version)
+        }
+        .await;
+        for sender in done {
+            let _ = sender.send(result.as_ref().copied().map_err(Error::duplicate));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -229,12 +279,21 @@ pub async fn connect(url: &str, options: ConnectOptions) -> Result<Client, Error
     if let Some(dir) = &options.cache_dir {
         database = database.with_cache_dir(dir)?;
     }
+    open(database, options.index, options.sync_every).await
+}
+
+async fn open(
+    database: Database,
+    index: IndexOptions,
+    sync_every: Option<Duration>,
+) -> Result<Client, Error> {
     let inner = Inner {
-        replica: Replica::new(database.clone(), options.index),
+        replica: Replica::new(database.clone(), index),
         database,
         engine: Engine::new(),
-        sync_every: options.sync_every,
+        sync_every,
         state: Mutex::default(),
+        groups: Mutex::default(),
     };
     let client = Client {
         inner: Arc::new(inner),
@@ -481,6 +540,7 @@ impl Collection {
     }
 
     /// Adds documents, replacing any with the same id; durable on return, and visible to this client.
+    /// Writes to one namespace that arrive while it commits share the next commit.
     pub async fn add(&self, documents: impl IntoIterator<Item = Document>) -> Result<u64, Error> {
         self.write(documents, std::iter::empty()).await
     }
@@ -495,15 +555,28 @@ impl Collection {
         documents: impl IntoIterator<Item = Document>,
         deletes: impl IntoIterator<Item = u64>,
     ) -> Result<u64, Error> {
-        let mut txn = self
-            .inner
-            .database
-            .namespace(&self.namespace)?
-            .begin()
-            .await?;
-        txn.append_documents(&self.name, documents, deletes)?;
-        let version = txn.commit().await?.version;
-        self.inner.sync().await?;
+        validate_name("namespace", &self.namespace)?;
+        let segment =
+            crate::Segment::build_with(self.inner.database.build_options(), documents, deletes)?;
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let start = {
+            let mut groups = self.inner.groups.lock().unwrap_or_else(|e| e.into_inner());
+            let group = groups.entry(self.namespace.clone()).or_default();
+            group.queue.push(Pending {
+                collection: self.name.clone(),
+                segment,
+                done: sender,
+            });
+            let pid = std::process::id();
+            group.committer.replace(pid) != Some(pid)
+        };
+        if start {
+            // Spawned, so a caller that stops waiting cannot strand the writes queued behind it.
+            crate::store::spawn(commit_groups(self.inner.clone(), self.namespace.clone()));
+        }
+        let version = receiver
+            .await
+            .map_err(|_| Error::Conflict("the commit task stopped".into()))??;
         self.optimize_soon();
         Ok(version)
     }
@@ -711,6 +784,58 @@ mod tests {
         hits.iter()
             .map(|c| c.key.as_deref().unwrap_or_default())
             .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_writes_share_commits_and_each_lands() {
+        // Each request takes 5 ms, so writes queue while a commit runs, as on a remote store.
+        let store = std::sync::Arc::new(crate::sim::FaultStore::default());
+        store
+            .latency_ms
+            .store(5, std::sync::atomic::Ordering::SeqCst);
+        let client = open(store.database(), IndexOptions::default(), None)
+            .await
+            .unwrap();
+        let songs = client
+            .get_or_create_collection("songs", Optimize::Off)
+            .await
+            .unwrap();
+        let albums = client
+            .get_or_create_collection("albums", Optimize::Off)
+            .await
+            .unwrap();
+        let before = client.inner.database.latest().await.unwrap().version;
+        let writes = (0..32u64).map(|id| {
+            let collection = if id % 2 == 0 {
+                songs.clone()
+            } else {
+                albums.clone()
+            };
+            async move {
+                let version = collection
+                    .add([Document::new(id, format!("title {id}"), 0.5)])
+                    .await
+                    .unwrap();
+                (id, version)
+            }
+        });
+        let written = futures::future::join_all(writes).await;
+        let commits = client.inner.database.latest().await.unwrap().version - before;
+        assert!(commits < 32, "{commits} commits for 32 writes");
+        for (id, version) in written {
+            let manifest = client.inner.database.manifest(version).await.unwrap();
+            let name = if id % 2 == 0 { "songs" } else { "albums" };
+            let index = client
+                .inner
+                .database
+                .open_index(&manifest, name, IndexOptions::default())
+                .await
+                .unwrap();
+            assert!(
+                index.documents().any(|d| d.id == id),
+                "{id} missing at {version}"
+            );
+        }
     }
 
     #[tokio::test]

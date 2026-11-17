@@ -77,6 +77,11 @@ pub(crate) struct FaultStore {
     pub(crate) read_faults: AtomicUsize,
     /// Treats create-only writes as plain ones, as some S3-compatible stores do.
     pub(crate) ignore_create: AtomicBool,
+    /// Requests answered before the simulated process crashes and every later one fails.
+    pub(crate) crash_after: Mutex<Option<usize>>,
+    requests: AtomicUsize,
+    /// Added to every request.
+    pub(crate) latency_ms: std::sync::atomic::AtomicU64,
     trace: Mutex<Vec<String>>,
 }
 
@@ -94,6 +99,11 @@ impl FaultStore {
 
     pub(crate) fn database(self: &Arc<Self>) -> Database {
         Database::new(Store::from_object_store(self.clone()))
+    }
+
+    /// The requests answered so far, as `"<kind> <key>"`, and forgets them.
+    pub(crate) fn take_trace(&self) -> Vec<String> {
+        std::mem::take(&mut *self.trace.lock().unwrap())
     }
 
     fn calm(&self) {
@@ -115,17 +125,41 @@ impl FaultStore {
             .lock()
             .unwrap()
             .as_mut()
-            .map_or(0, |rng| rng.below(20));
+            .map_or(0, |rng| rng.below(20))
+            + self.latency_ms.load(Ordering::SeqCst);
         if ms > 0 {
             tokio::time::sleep(Duration::from_millis(ms)).await;
         }
+    }
+
+    /// Counts a request; true once the simulated process has crashed.
+    fn crashed(&self) -> bool {
+        let n = self.requests.fetch_add(1, Ordering::SeqCst);
+        self.crash_after
+            .lock()
+            .unwrap()
+            .is_some_and(|limit| n >= limit)
+    }
+
+    /// Crashes the process after `requests` more requests, or, with `None`, starts a new one.
+    pub(crate) fn crash_in(&self, requests: Option<usize>) {
+        let now = self.requests.load(Ordering::SeqCst);
+        *self.crash_after.lock().unwrap() = requests.map(|r| now + r);
+    }
+
+    pub(crate) fn has_crashed(&self) -> bool {
+        let now = self.requests.load(Ordering::SeqCst);
+        self.crash_after
+            .lock()
+            .unwrap()
+            .is_some_and(|limit| now > limit)
     }
 
     fn record(&self, op: &str, location: &Path) {
         // Segment names are random; only their kind matters for replay.
         let key = location.as_ref();
         let key = match key.split_once('/') {
-            Some((kind @ ("segments" | "_probe" | "_clock"), _)) => format!("{kind}/*"),
+            Some((kind @ ("segments" | "_probe" | "_clock" | "_inbox"), _)) => format!("{kind}/*"),
             _ => key.to_owned(),
         };
         self.trace.lock().unwrap().push(format!("{op} {key}"));
@@ -170,6 +204,9 @@ impl ObjectStore for FaultStore {
         mut opts: PutOptions,
     ) -> object_store::Result<object_store::PutResult> {
         self.stall().await;
+        if self.crashed() {
+            return Err(Self::error());
+        }
         if self.ignore_create.load(Ordering::SeqCst) {
             opts.mode = PutMode::Overwrite;
         }
@@ -204,7 +241,10 @@ impl ObjectStore for FaultStore {
         options: object_store::GetOptions,
     ) -> object_store::Result<object_store::GetResult> {
         self.stall().await;
-        self.record("get", location);
+        if self.crashed() {
+            return Err(Self::error());
+        }
+        self.record(if options.head { "head" } else { "get" }, location);
         let scripted = self.read_faults.load(Ordering::SeqCst) > 0
             && self.read_faults.fetch_sub(1, Ordering::SeqCst) > 0;
         if scripted || self.failing_reads.load(Ordering::SeqCst) || self.roll(4) {
@@ -217,6 +257,10 @@ impl ObjectStore for FaultStore {
         &self,
         locations: futures::stream::BoxStream<'static, object_store::Result<Path>>,
     ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
+        self.trace.lock().unwrap().push("delete".into());
+        if self.crashed() {
+            return locations.map(|_| Err(Self::error())).boxed();
+        }
         self.inner.delete_stream(locations)
     }
 
@@ -225,6 +269,9 @@ impl ObjectStore for FaultStore {
         prefix: Option<&Path>,
     ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>> {
         self.record("list", prefix.unwrap_or(&Path::default()));
+        if self.crashed() {
+            return futures::stream::once(async { Err(Self::error()) }).boxed();
+        }
         let listing = self.inner.list(prefix);
         // A listing cut short, as an eventually consistent or paginated store may return.
         if self.roll(4) {
@@ -474,6 +521,168 @@ mod tests {
                 panic!("seed {seed}: {problem}; replay with COMPLETYPE_SIM_SEED={seed}");
             }
         }
+    }
+
+    /// Submits three change sets, the second deleting a document of the first, and crashes the
+    /// ingestor after each of its requests in turn. A new process then finishes the work, and
+    /// every change set must be applied exactly once, with nothing left behind after cleanup.
+    #[tokio::test]
+    async fn an_ingestor_that_crashes_at_any_request_loses_and_doubles_nothing() {
+        use crate::{ChangeSet, CleanupPolicy, Ingestor};
+        for crash_at in 0.. {
+            let store = Arc::new(FaultStore::default());
+            let database = store.database();
+            let mut ids = Vec::new();
+            for (upserts, deletes) in [(vec![1, 2], vec![]), (vec![3], vec![1]), (vec![4], vec![])]
+            {
+                let mut changes = ChangeSet::new();
+                changes.upsert(
+                    INDEX,
+                    upserts.into_iter().map(|id| Document::new(id, "song", 0.5)),
+                );
+                changes.delete(INDEX, deletes);
+                ids.push(database.submit(changes).await.unwrap());
+            }
+            let ingest = |owner: &'static str| {
+                let mut ingestor = Ingestor::new(store.database(), owner);
+                ingestor.lease_ttl = Duration::from_millis(1);
+                ingestor.max_change_sets = 1;
+                ingestor.compaction = Some(CompactionPolicy::default().fanout(2).max_segments(2));
+                ingestor
+            };
+
+            store.crash_in(Some(crash_at));
+            let mut first = ingest("first");
+            for _ in 0..5 {
+                let _ = first.run_once().await;
+            }
+            let crashed = store.has_crashed();
+            store.crash_in(None);
+
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let mut second = ingest("second");
+            for _ in 0..10 {
+                second.run_once().await.unwrap();
+            }
+            let at = format!("crash after {crash_at} requests");
+            assert_eq!(database.pending_change_sets().await.unwrap(), 0, "{at}");
+            let latest = database.latest().await.unwrap();
+            let documents: BTreeSet<u64> = database
+                .open_index(&latest, INDEX, Default::default())
+                .await
+                .unwrap()
+                .documents()
+                .map(|d| d.id)
+                .collect();
+            assert_eq!(documents, BTreeSet::from([2, 3, 4]), "{at}");
+
+            // Each change set is first recorded as applied in exactly one version.
+            let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+            let mut before: Vec<String> = Vec::new();
+            for version in database.versions().await.unwrap() {
+                let applied = crate::database::claimed(
+                    &database.manifest(version).await.unwrap(),
+                    crate::inbox::APPLIED,
+                );
+                for id in applied.iter().filter(|id| !before.contains(id)) {
+                    *seen.entry(id.clone()).or_default() += 1;
+                }
+                before = applied;
+            }
+            for id in &ids {
+                assert_eq!(seen.get(id), Some(&1), "{at}: change set {id}");
+            }
+
+            let policy = CleanupPolicy::default()
+                .keep_versions(1)
+                .older_than(Duration::ZERO);
+            database.cleanup(&policy).await.unwrap();
+            let referenced: BTreeSet<String> = latest
+                .entries()
+                .flat_map(|(_, _, e)| e.segments.iter().map(|s| s.key.clone()))
+                .collect();
+            let store_ = database.store();
+            let segments: BTreeSet<String> =
+                store_.list("segments").await.unwrap().into_iter().collect();
+            assert_eq!(segments, referenced, "{at}: orphaned segments");
+            for prefix in ["_probe", "_clock", "_inbox"] {
+                assert!(
+                    store_.list(prefix).await.unwrap().is_empty(),
+                    "{at}: {prefix} left"
+                );
+            }
+            if !crashed {
+                assert!(crash_at > 10, "the crash points never reached the ingestor");
+                break;
+            }
+        }
+    }
+
+    /// Exact requests per operation, so that an extra one fails here rather than on a bill.
+    #[tokio::test]
+    async fn operations_make_exactly_the_requests_they_need() {
+        let store = Arc::new(FaultStore::default());
+        let database = store.database();
+        database.store().check_create_only().await.unwrap();
+        let commit = |id: u64| {
+            let database = database.clone();
+            async move {
+                let mut txn = database.begin().await.unwrap();
+                txn.append_documents(INDEX, [Document::new(id, "Rust", 0.5)], [])
+                    .unwrap();
+                txn.commit().await.unwrap();
+            }
+        };
+        commit(1).await;
+        store.take_trace();
+        let version = |v: u64| format!("_versions/{v:020}.json");
+
+        commit(2).await;
+        assert_eq!(
+            store.take_trace(),
+            [
+                "list _versions".to_owned(),
+                format!("get {}", version(1)),
+                "put segments/*".into(),
+                "list _versions".into(),
+                format!("put {}", version(2)),
+            ]
+        );
+
+        let engine = crate::Engine::new();
+        let replica = crate::Replica::new(database.clone(), Default::default());
+        replica.sync(&engine).await.unwrap();
+        assert_eq!(
+            store.take_trace(),
+            [
+                "list _versions".to_owned(),
+                format!("get {}", version(2)),
+                "get segments/*".into(),
+                "get segments/*".into(),
+            ]
+        );
+        replica.sync(&engine).await.unwrap();
+        assert_eq!(store.take_trace(), ["list _versions"]);
+
+        commit(3).await;
+        store.take_trace();
+        replica.sync(&engine).await.unwrap();
+        assert_eq!(
+            store.take_trace(),
+            [
+                "list _versions".to_owned(),
+                format!("get {}", version(3)),
+                "get segments/*".into(),
+            ]
+        );
+
+        engine.complete(&[INDEX], "ru", 10).unwrap();
+        assert!(store.take_trace().is_empty());
+
+        let mut changes = crate::ChangeSet::new();
+        changes.upsert(INDEX, [Document::new(9, "Go", 0.5)]);
+        database.submit(changes).await.unwrap();
+        assert_eq!(store.take_trace(), ["put _inbox/*"]);
     }
 
     #[test]

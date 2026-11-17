@@ -17,7 +17,7 @@ const INBOX: &str = "_inbox";
 const REJECTED: &str = "_rejected";
 const MAGIC: &[u8; 8] = b"CMPLTYIB";
 const INGESTOR_LEASE: &str = "ingestor";
-const APPLIED: &str = "completype.inbox.applied";
+pub(crate) const APPLIED: &str = "completype.inbox.applied";
 const GENERATION: &str = "completype.ingestor.generation";
 
 /// An index of a namespace, as `(namespace, index)`.

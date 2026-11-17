@@ -33,6 +33,14 @@ All notable changes to this project are documented here. The format follows
 - Before its first commit, lease or change set, a database checks once that the store refuses a second
   create-only write to the same key. Some S3-compatible stores ignore `If-None-Match`, which would let
   concurrent writers overwrite each other; completype now refuses to write to them.
+- Cleanup also removes clock and create-only probe objects left by a process that stopped between
+  writing and deleting them.
+
+### Changed
+
+- Concurrent `Collection` writes to one namespace share commits: writes that arrive while a commit runs
+  go into the next one together. Each write still returns once it is durable, with the version that
+  holds it.
 
 ## [0.1.1](https://github.com/sayef/completype/releases/tag/v0.1.1) - 2026-10-15
 
