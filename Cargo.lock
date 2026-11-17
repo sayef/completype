@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "completype"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "completype-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "completype",
@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "completype-py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "completype",
  "mimalloc",
