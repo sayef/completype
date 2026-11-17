@@ -114,6 +114,9 @@ pub enum Error {
     },
     /// A concurrent commit changed what this transaction depends on.
     Conflict(String),
+    /// A commit's write failed in a way that leaves unknown whether it landed, and reading it back
+    /// kept failing. The database is consistent either way; read it to find out.
+    OutcomeUnknown(String),
     #[cfg(feature = "store")]
     Store(object_store::Error),
 }
@@ -150,6 +153,7 @@ impl std::fmt::Display for Error {
                 write!(f, "; set ignore_missing_layers if it may not exist")
             }
             Self::Conflict(m) => write!(f, "commit conflict: {m}"),
+            Self::OutcomeUnknown(m) => write!(f, "commit outcome unknown: {m}"),
             #[cfg(feature = "store")]
             Self::Store(e) => write!(f, "store error: {e}"),
         }

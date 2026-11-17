@@ -184,7 +184,7 @@ impl Database {
         let key = format!("{INBOX}/{id}.batch");
         if !self
             .store()
-            .put_if_absent(&key, encode(&id, &parts))
+            .put_unique_if_absent(&key, encode(&id, &parts))
             .await?
         {
             return Err(Error::Conflict(format!("inbox batch {id} exists")));

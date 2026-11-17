@@ -192,6 +192,24 @@ impl Store {
         }
     }
 
+    /// Like [`Store::put_if_absent`], but an existing object holding exactly `data` counts as
+    /// written: the client retries a timed-out request, which then finds its own first attempt.
+    /// Only for data no other writer can produce.
+    pub(crate) async fn put_unique_if_absent(
+        &self,
+        key: &str,
+        data: Vec<u8>,
+    ) -> Result<bool, Error> {
+        if self.put_if_absent(key, data.clone()).await? {
+            return Ok(true);
+        }
+        match self.get(key).await {
+            Ok(found) => Ok(found == data),
+            Err(Error::NotFound(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn delete(&self, key: &str) -> Result<(), Error> {
         self.client().await?.delete(&self.path(key)).await?;
         Ok(())
@@ -739,6 +757,188 @@ mod tests {
         ) -> object_store::Result<()> {
             self.inner.copy_opts(from, to, options).await
         }
+    }
+
+    /// How [`Faulty`] answers the next create-only writes and reads.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Fault {
+        /// Writes, then reports an error, as a timed-out request that landed.
+        LandThenFail,
+        /// Writes, then reports that the object exists, as a client retry of a landed request.
+        LandThenExists,
+        /// Fails without writing.
+        FailBefore,
+    }
+
+    /// An in-memory store that injects faults into create-only writes, and optionally into reads.
+    #[derive(Debug, Default)]
+    struct Faulty {
+        inner: InMemory,
+        faults: std::sync::Mutex<Vec<Fault>>,
+        failing_reads: std::sync::atomic::AtomicBool,
+    }
+
+    impl Faulty {
+        fn error() -> object_store::Error {
+            object_store::Error::Generic {
+                store: "Faulty",
+                source: "request timed out".into(),
+            }
+        }
+    }
+
+    impl std::fmt::Display for Faulty {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Faulty")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ObjectStore for Faulty {
+        async fn put_opts(
+            &self,
+            location: &Path,
+            payload: PutPayload,
+            opts: PutOptions,
+        ) -> object_store::Result<object_store::PutResult> {
+            let fault = match opts.mode {
+                PutMode::Create => self.faults.lock().unwrap().pop(),
+                _ => None,
+            };
+            match fault {
+                None => self.inner.put_opts(location, payload, opts).await,
+                Some(Fault::FailBefore) => Err(Self::error()),
+                Some(Fault::LandThenFail) => {
+                    self.inner.put_opts(location, payload, opts).await?;
+                    Err(Self::error())
+                }
+                Some(Fault::LandThenExists) => {
+                    self.inner
+                        .put_opts(location, payload.clone(), opts.clone())
+                        .await?;
+                    self.inner.put_opts(location, payload, opts).await
+                }
+            }
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &Path,
+            opts: object_store::PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            self.inner.put_multipart_opts(location, opts).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &Path,
+            options: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            if self.failing_reads.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(Self::error());
+            }
+            self.inner.get_opts(location, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: futures::stream::BoxStream<'static, object_store::Result<Path>>,
+        ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
+            self.inner.delete_stream(locations)
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&Path>,
+        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
+        {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&Path>,
+        ) -> object_store::Result<object_store::ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &Path,
+            to: &Path,
+            options: object_store::CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+    }
+
+    fn faulty(faults: &[Fault]) -> (Arc<Faulty>, crate::Database) {
+        let faulty = Arc::new(Faulty::default());
+        // Popped from the end, so reversed to apply in order.
+        *faulty.faults.lock().unwrap() = faults.iter().rev().copied().collect();
+        let store = Store {
+            inner: faulty.clone(),
+            prefix: Path::default(),
+            local_root: None,
+            cache: None,
+            namespace: "faulty".into(),
+            tags: TagSet::default(),
+            pid: std::process::id(),
+            reopen: None,
+        };
+        (faulty, crate::Database::new(store))
+    }
+
+    async fn append(database: &crate::Database, id: u64) -> Result<crate::Manifest, Error> {
+        let mut txn = database.begin().await.unwrap();
+        txn.append_documents("songs", [Document::new(id, "Rust", 0.5)], [])
+            .unwrap();
+        txn.commit().await
+    }
+
+    #[tokio::test]
+    async fn a_commit_whose_write_landed_but_failed_or_conflicted_counts_once() {
+        for fault in [Fault::LandThenFail, Fault::LandThenExists] {
+            let (_, database) = faulty(&[fault]);
+            let manifest = append(&database, 1).await.unwrap();
+            assert_eq!(manifest.version, 1, "{fault:?}");
+            assert_eq!(database.versions().await.unwrap(), [1], "{fault:?}");
+            let entry = manifest.index("default", "songs").unwrap();
+            assert_eq!(entry.segments.len(), 1, "{fault:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_commit_whose_write_failed_before_landing_is_retried() {
+        let (_, database) = faulty(&[Fault::FailBefore, Fault::FailBefore]);
+        let manifest = append(&database, 1).await.unwrap();
+        assert_eq!(database.versions().await.unwrap(), [manifest.version]);
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_cannot_be_read_back_reports_its_outcome_unknown() {
+        let (faulty, database) = faulty(&[Fault::LandThenFail]);
+        let mut txn = database.begin().await.unwrap();
+        txn.append_documents("songs", [Document::new(1, "Rust", 0.5)], [])
+            .unwrap();
+        faulty
+            .failing_reads
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let error = txn.commit().await.unwrap_err();
+        assert!(matches!(error, Error::OutcomeUnknown(_)), "{error}");
+    }
+
+    #[tokio::test]
+    async fn leases_and_change_sets_whose_write_landed_but_conflicted_succeed() {
+        let (_, database) = faulty(&[Fault::LandThenExists, Fault::LandThenExists]);
+        let lease = database
+            .acquire_lease("ingestor", "me", std::time::Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(lease.is_some());
+        let mut changes = crate::ChangeSet::new();
+        changes.upsert("songs", [Document::new(2, "Go", 0.5)]);
+        database.submit(changes).await.unwrap();
     }
 
     #[tokio::test]

@@ -43,3 +43,7 @@ class InvalidInputError(CompletypeError, ValueError):
 
 class StorageError(CompletypeError, OSError):
     """The file system or object store failed."""
+
+
+class OutcomeUnknownError(StorageError):
+    """A commit may or may not have landed: its write failed ambiguously and reading it back kept failing."""

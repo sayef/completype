@@ -149,7 +149,7 @@ Every name on this page is importable from `completype`.
 ## Errors
 
 Every error derives from `CompletypeError`. `NotFoundError` is also a `LookupError`, `InvalidInputError` a
-`ValueError`, and `StorageError` an `OSError`. `NamespaceNotFoundError` and `LayerNotFoundError` are
+`ValueError`, and `StorageError` an `OSError`. `OutcomeUnknownError` is a `StorageError`. `NamespaceNotFoundError` and `LayerNotFoundError` are
 `NotFoundError`s that carry the missing `name` and the names that exist in `available`.
 
 ::: completype.CompletypeError
@@ -181,6 +181,10 @@ Every error derives from `CompletypeError`. `NotFoundError` is also a `LookupErr
       heading_level: 3
 
 ::: completype.StorageError
+    options:
+      heading_level: 3
+
+::: completype.OutcomeUnknownError
     options:
       heading_level: 3
 

@@ -66,6 +66,9 @@ pub struct Manifest {
     pub namespaces: BTreeMap<String, Indexes>,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+    /// Unique to the commit that wrote this version, so a writer can recognise its own write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_id: Option<String>,
 }
 
 impl Manifest {
@@ -950,28 +953,57 @@ impl Transaction {
             refs.push(Some(reference));
         }
 
+        let commit_id = uuid::Uuid::new_v4().simple().to_string();
+        // Versions written with an unknown outcome, until read back.
+        let mut uncertain: Vec<u64> = Vec::new();
         let mut latest = self.read.clone();
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
                 backoff(attempt).await;
             }
-            if let Some(version) = self.database.latest_version_after(latest.version).await? {
-                latest = self.database.manifest(version).await?;
+            if let Some(ours) = self.landed(&mut uncertain, &commit_id).await? {
+                return Ok((ours, attempt));
+            }
+            match self.refresh(&mut latest).await {
+                Err(e) if !uncertain.is_empty() => {
+                    return Err(Error::OutcomeUnknown(format!(
+                        "version {} could not be read back: {e}",
+                        uncertain[0]
+                    )))
+                }
+                result => result?,
             }
             self.check_conflicts(&latest)?;
-            let next = self.apply(&latest, &refs)?;
-            if store
-                .put_if_absent(&version_key(next.version), next.to_json().into_bytes())
-                .await?
+            let mut next = self.apply(&latest, &refs)?;
+            next.commit_id = Some(commit_id.clone());
+            match store
+                .put_unique_if_absent(&version_key(next.version), next.to_json().into_bytes())
+                .await
             {
-                tracing::info!(
-                    version = next.version,
-                    attempts = attempt + 1,
-                    segments = refs.iter().flatten().count(),
-                    "committed"
-                );
-                return Ok((next, attempt + 1));
+                Ok(true) => {
+                    tracing::info!(
+                        version = next.version,
+                        attempts = attempt + 1,
+                        segments = refs.iter().flatten().count(),
+                        "committed"
+                    );
+                    return Ok((next, attempt + 1));
+                }
+                Ok(false) => {}
+                Err(e) if ambiguous(&e) => {
+                    tracing::warn!(version = next.version, error = %e, "manifest write outcome unknown");
+                    uncertain.push(next.version);
+                }
+                Err(e) => return Err(e),
             }
+        }
+        if let Some(ours) = self.landed(&mut uncertain, &commit_id).await? {
+            return Ok((ours, self.max_retries + 1));
+        }
+        if let Some(version) = uncertain.first() {
+            return Err(Error::OutcomeUnknown(format!(
+                "version {version} may still be written by this commit"
+            )));
         }
         tracing::warn!(
             attempts = self.max_retries + 1,
@@ -981,6 +1013,60 @@ impl Transaction {
             "gave up after {} concurrent commits",
             self.max_retries + 1
         )))
+    }
+
+    /// Moves `latest` to the newest version, if there is a newer one.
+    async fn refresh(&self, latest: &mut Manifest) -> Result<(), Error> {
+        if let Some(version) = self.database.latest_version_after(latest.version).await? {
+            *latest = self.database.manifest(version).await?;
+        }
+        Ok(())
+    }
+
+    /// Reads back `uncertain` versions: the one this commit wrote, if any landed. Versions found
+    /// written by others are dropped; ones still missing stay.
+    async fn landed(
+        &self,
+        uncertain: &mut Vec<u64>,
+        commit_id: &str,
+    ) -> Result<Option<Manifest>, Error> {
+        let mut index = 0;
+        while index < uncertain.len() {
+            let version = uncertain[index];
+            let mut read = None;
+            for attempt in 0..OUTCOME_READS {
+                if attempt > 0 {
+                    backoff(attempt).await;
+                }
+                match self.database.manifest(version).await {
+                    Ok(manifest) => {
+                        read = Some(Some(manifest));
+                        break;
+                    }
+                    Err(Error::NotFound(_)) => {
+                        read = Some(None);
+                        break;
+                    }
+                    Err(e) => tracing::warn!(version, error = %e, "reading back a manifest"),
+                }
+            }
+            match read {
+                None => {
+                    return Err(Error::OutcomeUnknown(format!(
+                        "version {version} could not be read back"
+                    )))
+                }
+                Some(Some(manifest)) if manifest.commit_id.as_deref() == Some(commit_id) => {
+                    tracing::info!(version, "commit found landed after an ambiguous write");
+                    return Ok(Some(manifest));
+                }
+                Some(Some(_)) => {
+                    uncertain.remove(index);
+                }
+                Some(None) => index += 1,
+            }
+        }
+        Ok(None)
     }
 
     fn check_conflicts(&self, latest: &Manifest) -> Result<(), Error> {
@@ -1135,6 +1221,25 @@ fn estimate_max_score(segment: &Arc<Segment>) -> Result<f64, Error> {
     Ok(Index::new(vec![segment.clone()], IndexOptions::default())?.max_score())
 }
 
+/// Reads of a version written with an unknown outcome before giving up with [`Error::OutcomeUnknown`].
+const OUTCOME_READS: usize = 8;
+
+/// Whether a failed write may still have taken effect: anything but a definite rejection.
+fn ambiguous(error: &Error) -> bool {
+    match error {
+        Error::Io(_) => true,
+        Error::Store(e) => !matches!(
+            e,
+            object_store::Error::PermissionDenied { .. }
+                | object_store::Error::Unauthenticated { .. }
+                | object_store::Error::NotSupported { .. }
+                | object_store::Error::NotImplemented { .. }
+                | object_store::Error::InvalidPath { .. }
+        ),
+        _ => false,
+    }
+}
+
 /// Exponential backoff with full jitter, from 10 ms up to 1 s.
 async fn backoff(attempt: usize) {
     let cap = (10u64 << attempt.min(7)).min(1000);
@@ -1221,7 +1326,7 @@ impl Lease {
         let next = self.generation + 1;
         if !self
             .store
-            .put_if_absent(&lease_key(&self.prefix, next), data)
+            .put_unique_if_absent(&lease_key(&self.prefix, next), data)
             .await?
         {
             return Ok(false);

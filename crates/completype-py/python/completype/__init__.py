@@ -16,6 +16,7 @@ from ._errors import (
     LayerNotFoundError,
     NamespaceNotFoundError,
     NotFoundError,
+    OutcomeUnknownError,
     StorageError,
 )
 from ._types import MatchKind
@@ -86,6 +87,7 @@ __all__ = [
     "NamespaceNotFoundError",
     "NamespaceTransaction",
     "NotFoundError",
+    "OutcomeUnknownError",
     "Replica",
     "Segment",
     "SegmentWriter",
