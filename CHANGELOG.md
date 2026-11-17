@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/sayef/completype/compare/v0.1.1...v0.1.2) - 2026-11-17
+
 ### Added
 
 - `layer_weights` on layered searches and `Collection.complete`: a multiplier per layer for its scores, so
