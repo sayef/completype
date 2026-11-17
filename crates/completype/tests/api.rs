@@ -173,7 +173,8 @@ fn corrections_keep_short_words_and_the_word_being_typed() {
             .map(|s| s.id)
             .collect::<Vec<_>>()
     };
-    assert_eq!(ids("welcoem to"), [1]);
+    // "to" holds "Welcome to the Jungle" first; "Welcome Home" only fills the list below it.
+    assert_eq!(ids("welcoem to"), [1, 2]);
     assert_eq!(ids("the sercet wor"), [3]);
     let direct = index.complete("welcome to", 10);
     assert_eq!((direct[0].id, direct[0].kind), (1, MatchKind::Prefix));
@@ -431,6 +432,20 @@ fn a_word_split_keeps_the_matches_the_query_has_as_typed() {
     let hits = index.complete("versicherungsrec", 5);
     assert_eq!(ids(&hits, |s| s.id), [1], "{hits:?}");
     assert_eq!(hits[0].kind, MatchKind::Infix);
+}
+
+#[test]
+fn matches_without_a_short_word_fill_the_list_below_those_with_it() {
+    let index = Index::from_documents([
+        Document::new(1, "HR policy and compliance", 0.5),
+        Document::new(2, "Public policy", 0.9),
+        Document::new(3, "Monetary policy", 0.8),
+    ])
+    .unwrap();
+    let hits = index.complete("HR policy", 5);
+    assert_eq!(ids(&hits, |s| s.id), [1, 2, 3], "{hits:?}");
+    assert!(hits[0].score > hits[1].score, "{hits:?}");
+    assert_eq!(ids(&index.complete("HR policy", 1), |s| s.id), [1]);
 }
 
 #[test]
