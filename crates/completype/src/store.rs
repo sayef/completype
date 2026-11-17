@@ -1,7 +1,8 @@
 //! Segment and object storage behind a URL: a local path, `file://`, `memory://`, `s3://`, `gs://` or `az://`.
 
 use std::path::{Path as FsPath, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use futures::{StreamExt, TryStreamExt};
 use object_store::local::LocalFileSystem;
@@ -24,6 +25,9 @@ pub struct ObjectInfo {
 #[derive(Clone, Debug)]
 pub struct Store {
     inner: Arc<dyn ObjectStore>,
+    /// The process `inner` was opened in, and how to reopen a remote store in a forked child.
+    pid: u32,
+    reopen: Option<Arc<Reopen>>,
     prefix: Path,
     local_root: Option<PathBuf>,
     /// Where remote segments are downloaded to and memory-mapped from, per store URL.
@@ -54,17 +58,22 @@ impl Store {
         let parsed =
             Url::parse(url).map_err(|e| Error::input(format!("invalid store url {url:?}: {e}")))?;
         let prefix = Path::from_url_path(parsed.path()).map_err(object_store::Error::from)?;
-        let inner: Arc<dyn ObjectStore> = match parsed.scheme() {
+        let (inner, reopen): (Arc<dyn ObjectStore>, _) = match parsed.scheme() {
             "file" => {
                 let path = parsed
                     .to_file_path()
                     .map_err(|_| Error::input(format!("invalid file url {url:?}")))?;
                 return Self::local(&path);
             }
-            "memory" => Arc::new(InMemory::new()),
-            #[cfg(feature = "aws")]
-            "s3" | "s3a" => s3::build(&parsed, options).await?,
-            _ => object_store::parse_url_opts(&parsed, options)?.0.into(),
+            "memory" => (Arc::new(InMemory::new()), None),
+            _ => (
+                remote(&parsed, options.clone()).await?,
+                Some(Arc::new(Reopen {
+                    url: parsed.clone(),
+                    options,
+                    current: Mutex::default(),
+                })),
+            ),
         };
         let namespace = url
             .chars()
@@ -78,6 +87,8 @@ impl Store {
             .collect();
         Ok(Self {
             inner,
+            pid: std::process::id(),
+            reopen,
             prefix,
             local_root: None,
             cache: None,
@@ -92,12 +103,23 @@ impl Store {
         let inner = Arc::new(LocalFileSystem::new_with_prefix(&root)?);
         Ok(Self {
             inner,
+            pid: std::process::id(),
+            reopen: None,
             prefix: Path::default(),
             local_root: Some(root),
             cache: None,
             namespace: String::new(),
             tags: TagSet::default(),
         })
+    }
+
+    /// This process's client: a forked child reopens a remote store, whose connections and
+    /// credential refreshes belong to the parent's threads.
+    async fn client(&self) -> Result<Arc<dyn ObjectStore>, Error> {
+        match &self.reopen {
+            Some(reopen) if std::process::id() != self.pid => reopen.client().await,
+            _ => Ok(self.inner.clone()),
+        }
     }
 
     fn path(&self, key: &str) -> Path {
@@ -111,7 +133,8 @@ impl Store {
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>, Error> {
         Ok(self
-            .inner
+            .client()
+            .await?
             .get(&self.path(key))
             .await?
             .bytes()
@@ -142,7 +165,8 @@ impl Store {
             tags: self.tags.clone(),
             ..PutOptions::default()
         };
-        self.inner
+        self.client()
+            .await?
             .put_opts(&self.path(key), PutPayload::from(data), options)
             .await?;
         Ok(())
@@ -157,7 +181,8 @@ impl Store {
             ..PutOptions::default()
         };
         match self
-            .inner
+            .client()
+            .await?
             .put_opts(&self.path(key), PutPayload::from(data), options)
             .await
         {
@@ -168,7 +193,7 @@ impl Store {
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), Error> {
-        self.inner.delete(&self.path(key)).await?;
+        self.client().await?.delete(&self.path(key)).await?;
         Ok(())
     }
 
@@ -178,7 +203,8 @@ impl Store {
         let paths: Vec<object_store::Result<Path>> =
             keys.into_iter().map(|k| Ok(self.path(k))).collect();
         let results = self
-            .inner
+            .client()
+            .await?
             .delete_stream(futures::stream::iter(paths).boxed());
         let outcomes: Vec<object_store::Result<Path>> = results.collect().await;
         for outcome in outcomes {
@@ -202,8 +228,8 @@ impl Store {
 
     /// Keys under `prefix` with their size and modification time, sorted by key.
     pub async fn list_objects(&self, prefix: &str) -> Result<Vec<ObjectInfo>, Error> {
-        self.collect(self.inner.list(Some(&self.path(prefix))))
-            .await
+        let listing = self.client().await?.list(Some(&self.path(prefix)));
+        self.collect(listing).await
     }
 
     /// Like [`Store::list_objects`], but only keys sorting after `after`.
@@ -212,11 +238,11 @@ impl Store {
         prefix: &str,
         after: &str,
     ) -> Result<Vec<ObjectInfo>, Error> {
-        self.collect(
-            self.inner
-                .list_with_offset(Some(&self.path(prefix)), &self.path(after)),
-        )
-        .await
+        let listing = self
+            .client()
+            .await?
+            .list_with_offset(Some(&self.path(prefix)), &self.path(after));
+        self.collect(listing).await
     }
 
     async fn collect(
@@ -256,7 +282,8 @@ impl Store {
         let key = format!("_clock/{}", uuid::Uuid::new_v4().simple());
         self.put(&key, Vec::new()).await?;
         let modified = self
-            .inner
+            .client()
+            .await?
             .head(&self.path(&key))
             .await?
             .last_modified
@@ -293,7 +320,7 @@ impl Store {
         let Some(cache) = &self.cache else {
             return Segment::from_bytes(self.get(key).await?);
         };
-        let meta = self.inner.head(&self.path(key)).await?;
+        let meta = self.client().await?.head(&self.path(key)).await?;
         let tag: String = meta
             .e_tag
             .as_deref()
@@ -339,7 +366,7 @@ impl Store {
         let partial = path.with_extension(format!("{}.partial", uuid::Uuid::new_v4().simple()));
         let download = async {
             let mut file = std::fs::File::create(&partial)?;
-            let mut stream = self.inner.get(&location).await?.into_stream();
+            let mut stream = self.client().await?.get(&location).await?.into_stream();
             while let Some(chunk) = stream.try_next().await? {
                 std::io::Write::write_all(&mut file, &chunk)?;
             }
@@ -398,16 +425,34 @@ pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     runtime().block_on(future)
 }
 
+/// This process's runtime. A forked child starts its own, as the parent's threads are gone; the
+/// parent's copy is leaked, since dropping it would wait for them.
 fn runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("completype-store")
-            .enable_all()
-            .build()
-            .expect("failed to start the storage runtime")
-    })
+    static RUNTIME: AtomicPtr<tokio::runtime::Runtime> = AtomicPtr::new(std::ptr::null_mut());
+    static OWNER: AtomicU32 = AtomicU32::new(0);
+    static START: Mutex<()> = Mutex::new(());
+    let pid = std::process::id();
+    let current = || {
+        let runtime = RUNTIME.load(Ordering::Acquire);
+        // SAFETY: runtimes are never freed, so a stored pointer stays valid.
+        (OWNER.load(Ordering::Acquire) == pid && !runtime.is_null()).then(|| unsafe { &*runtime })
+    };
+    if let Some(runtime) = current() {
+        return runtime;
+    }
+    let _start = START.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(runtime) = current() {
+        return runtime;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("completype-store")
+        .enable_all()
+        .build()
+        .expect("failed to start the storage runtime");
+    RUNTIME.store(Box::into_raw(Box::new(runtime)), Ordering::Release);
+    OWNER.store(pid, Ordering::Release);
+    current().expect("the runtime was just stored")
 }
 
 /// [`Store`] for synchronous callers, run on an internal runtime. Do not call from async code.
@@ -475,6 +520,35 @@ impl BlockingStore {
 
     pub fn inner(&self) -> &Store {
         &self.0
+    }
+}
+
+async fn remote(url: &Url, options: Vec<(String, String)>) -> Result<Arc<dyn ObjectStore>, Error> {
+    Ok(match url.scheme() {
+        #[cfg(feature = "aws")]
+        "s3" | "s3a" => s3::build(url, options).await?,
+        _ => object_store::parse_url_opts(url, options)?.0.into(),
+    })
+}
+
+/// A remote store's settings, to open it again in a forked child.
+#[derive(Debug)]
+struct Reopen {
+    url: Url,
+    options: Vec<(String, String)>,
+    current: Mutex<Option<(u32, Arc<dyn ObjectStore>)>>,
+}
+
+impl Reopen {
+    async fn client(&self) -> Result<Arc<dyn ObjectStore>, Error> {
+        let pid = std::process::id();
+        let current = || self.current.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, client)) = current().as_ref().filter(|(owner, _)| *owner == pid) {
+            return Ok(client.clone());
+        }
+        let client = remote(&self.url, self.options.clone()).await?;
+        *current() = Some((pid, client.clone()));
+        Ok(client)
     }
 }
 
@@ -672,6 +746,8 @@ mod tests {
         let recording = Arc::new(Recording::default());
         let store = Store {
             inner: recording.clone(),
+            pid: std::process::id(),
+            reopen: None,
             prefix: Path::default(),
             local_root: None,
             cache: None,

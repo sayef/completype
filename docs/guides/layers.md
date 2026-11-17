@@ -31,7 +31,8 @@ A query passes its layers in order. Each layer is searched on its own, and the r
 - **Additions**: documents only a later layer holds are completed alongside the rest.
 - **One scale**: scores from every layer are put on the first layer's scale, so a song that a layer copies
   unchanged ranks exactly where it did, and raising its popularity raises it by as much as it would in the
-  catalogue.
+  catalogue. `layer_weights` changes that when a layer should count for more (see
+  [Weighting layers](#weighting-layers)).
 
 Each suggestion's `layer` names the index it came from. A layer that does not exist raises
 `LayerNotFoundError`, naming the indexes that do; pass `ignore_missing_layers=True` when some audiences have
@@ -212,6 +213,26 @@ show("99", stack)
 
 Order matters: put the layers that must have the last word, such as takedowns, last. `complete_aliases`,
 `vector_search` and `hybrid_search` take the same list of layers.
+
+## Weighting layers
+
+By default no layer is favoured: a station's songs compete with the catalogue's on one scale. To rank a
+layer's own matches higher, pass a multiplier per layer, in layer order; layers without one keep 1:
+
+```python
+engine.complete("danc", ["catalog", "radio"], limit=4)
+engine.complete("danc", ["catalog", "radio"], limit=4, layer_weights=[1, 1.5])
+```
+
+```text
+[('Dancing Queen – ABBA', 'catalog'), ('Dancing Queen (Live Session) – ABBA', 'radio'), ('Dancing in the Dark – Bruce Springsteen', 'catalog'), ('Dancing On My Own – Robyn', 'catalog')]
+[('Dancing Queen (Live Session) – ABBA', 'radio'), ('Dancing Queen – ABBA', 'catalog'), ('Dancing in the Dark – Bruce Springsteen', 'catalog'), ('Dancing On My Own – Robyn', 'catalog')]
+```
+
+A weight never lifts a typo correction above a direct match: a correction from a weighted layer still ranks below
+a direct match from any other. Weights must be positive. `complete_aliases`, `vector_search`,
+`hybrid_search` and `Collection.complete` take them too; for a collection, the first weight is the
+collection's own and the rest follow `layers`.
 
 ## Missing layers
 

@@ -63,6 +63,7 @@ Passed to: `Index(...)`, `Index.from_documents` (`max_score`, `popularity_weight
 | `limit` | 10 | every search | Maximum number of suggestions. |
 | `contexts` | `None` | every search | Only documents tagged with any of these contexts. |
 | `ignore_missing_layers` | `False` | layered searches | Search a layer whose index does not exist as empty instead of raising `LayerNotFoundError`. |
+| `layer_weights` | `None` | layered searches | A multiplier per layer for its scores, in layer order; missing ones are 1. |
 | `fusion` | `"rrf"` | `hybrid_search` | `"rrf"`, `"weighted"` or `"lexical_first"`. |
 | `rrf_k` | 60.0 | `hybrid_search` | `k` of reciprocal rank fusion. |
 | `semantic_weight` | 0.5 | `hybrid_search` | Weight of the semantic score in weighted fusion. |

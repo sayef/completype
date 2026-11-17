@@ -72,7 +72,23 @@ pub struct SearchOptions {
     pub contexts: Vec<String>,
     /// In layered searches, search a layer whose index does not exist as empty instead of failing.
     pub ignore_missing_layers: bool,
+    layer_weights: LayerWeights,
 }
+
+/// Compared by bit pattern, so that `SearchOptions` stays `Eq`.
+#[derive(Clone, Debug, Default)]
+struct LayerWeights(Vec<f64>);
+
+impl PartialEq for LayerWeights {
+    fn eq(&self, other: &Self) -> bool {
+        self.0
+            .iter()
+            .map(|w| w.to_bits())
+            .eq(other.0.iter().map(|w| w.to_bits()))
+    }
+}
+
+impl Eq for LayerWeights {}
 
 impl Default for SearchOptions {
     fn default() -> Self {
@@ -86,6 +102,7 @@ impl SearchOptions {
             limit,
             contexts: Vec::new(),
             ignore_missing_layers: false,
+            layer_weights: LayerWeights::default(),
         }
     }
 
@@ -103,6 +120,36 @@ impl SearchOptions {
         self.contexts = contexts.into_iter().map(Into::into).collect();
         self
     }
+
+    /// In layered searches, multipliers for each layer's scores, in layer order; missing ones are 1.
+    pub fn layer_weights(mut self, weights: impl IntoIterator<Item = f64>) -> Self {
+        self.layer_weights = LayerWeights(weights.into_iter().collect());
+        self
+    }
+
+    pub(crate) fn layer_weight(&self, layer: usize) -> f64 {
+        self.layer_weights.0.get(layer).copied().unwrap_or(1.0)
+    }
+
+    pub(crate) fn layer_weight_list(&self) -> &[f64] {
+        &self.layer_weights.0
+    }
+}
+
+/// Checks that `weights` has at most one finite, positive weight per layer.
+pub(crate) fn validate_layer_weights(weights: &[f64], layers: usize) -> Result<(), crate::Error> {
+    if weights.len() > layers {
+        return Err(crate::Error::input(format!(
+            "{} layer weights given for {layers} layers",
+            weights.len()
+        )));
+    }
+    if weights.iter().any(|w| !(w.is_finite() && *w > 0.0)) {
+        return Err(crate::Error::input(
+            "layer weights must be finite and positive",
+        ));
+    }
+    Ok(())
 }
 
 /// Cached short-query results keep `f32` scores, as the precomputed tables they replace did.
@@ -168,8 +215,10 @@ impl Index {
                 .collect();
         }
         let mut hits = self.raw_autocomplete(&Memo::default(), query, limit, 0);
-        if hits.is_empty() {
-            // Words too short to index, such as "HR" in "HR budgeting", give way when nothing holds them.
+        hits.truncate(limit);
+        let mut ranked: Vec<_> = hits.into_iter().map(|h| (h.doc, h.score, h.kind)).collect();
+        if ranked.len() < limit {
+            // Words too short to index, such as "HR" in "HR budgeting", give way to fill the list, ranked below.
             let min_chars = self.segment_config.min_word_chars as usize;
             let words: Vec<&str> = text::words(stripped).collect();
             let kept: Vec<&str> = words
@@ -178,11 +227,21 @@ impl Index {
                 .filter(|w| text::char_len(w) >= min_chars)
                 .collect();
             if !kept.is_empty() && kept.len() < words.len() {
-                return self.ranked(&kept.join(" "), limit);
+                let mut relaxed = self.ranked(&kept.join(" "), limit);
+                let floor = ranked.iter().map(|h| h.1).reduce(f64::min);
+                if let (Some(floor), Some(top)) = (floor, relaxed.first().map(|h| h.1)) {
+                    if top > 0.0 {
+                        let scale = (floor * 0.95 / top).min(1.0);
+                        relaxed.iter_mut().for_each(|h| h.1 *= scale);
+                    }
+                }
+                let mut seen: FxHashSet<u32> = ranked.iter().map(|h| h.0).collect();
+                relaxed.retain(|h| seen.insert(h.0));
+                ranked.extend(relaxed);
+                ranked.truncate(limit);
             }
         }
-        hits.truncate(limit);
-        hits.into_iter().map(|h| (h.doc, h.score, h.kind)).collect()
+        ranked
     }
 
     pub(crate) fn suggestion(
@@ -1080,11 +1139,48 @@ impl Index {
                     self.lookup_compound(memo, q, 3, false).into_iter().next()
                 {
                     if phrase != q {
-                        return self.raw_autocomplete(memo, &phrase, max_results, 1);
+                        let hits = self.raw_autocomplete(memo, &phrase, max_results, 1);
+                        // Only split into words, the query matched as typed; otherwise it was corrected.
+                        let corrected = phrase.replace(' ', "") != q;
+                        return merge_split(results, hits, corrected, max_results);
                     }
                 }
             }
         }
         results
     }
+}
+
+/// Adds the hits of a word split to the query's own: a plain split leads, a corrected one follows its direct matches.
+fn merge_split(
+    own: Vec<RawHit>,
+    mut split: Vec<RawHit>,
+    corrected: bool,
+    limit: usize,
+) -> Vec<RawHit> {
+    let (direct, fuzzy): (Vec<RawHit>, Vec<RawHit>) =
+        own.into_iter().partition(|h| h.kind != MatchKind::Fuzzy);
+    let mut merged = if corrected {
+        split.iter_mut().for_each(|h| h.kind = MatchKind::Fuzzy);
+        if let (Some(top), Some(floor)) = (
+            split.first().map(|h| h.score),
+            direct.iter().map(|h| h.score).reduce(f64::min),
+        ) {
+            if top > 0.0 {
+                let scale = (floor * 0.95 / top).min(1.0);
+                split.iter_mut().for_each(|h| h.score *= scale);
+            }
+        }
+        direct
+            .into_iter()
+            .chain(split)
+            .chain(fuzzy)
+            .collect::<Vec<_>>()
+    } else {
+        split.into_iter().chain(direct).chain(fuzzy).collect()
+    };
+    let mut seen = FxHashSet::default();
+    merged.retain(|h| seen.insert(h.doc));
+    merged.truncate(limit);
+    merged
 }

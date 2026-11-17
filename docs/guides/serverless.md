@@ -233,10 +233,12 @@ Python, `db.engine()` combines the two, and `Replica(database, engine)` is also 
 
 ### Forking servers
 
-completype's database calls run on a runtime shared by the process, and that runtime does not survive
-`fork()`. With a server that imports your app and then forks workers (gunicorn's `--preload`, or any
-pre-forking server), open databases and engines in each worker after it forks, not before. Servers that
-start each worker as a fresh process, such as uvicorn with `--workers`, need nothing special.
+Databases, engines and clients opened before `fork()` keep working in the children: a forked process
+starts its own storage runtime, thread pools and background sync, and reopens remote stores. That covers
+gunicorn's `--preload`, other pre-forking servers, and `multiprocessing` with the `fork` start method.
+A fork taken while another thread is in the middle of a sync or commit can still leave the child waiting
+on a lock that thread held, so opening in each worker after it forks remains the most robust choice.
+Servers that start each worker as a fresh process, such as uvicorn with `--workers`, need nothing special.
 
 ## Compaction
 

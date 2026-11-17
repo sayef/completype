@@ -177,7 +177,7 @@ print(served.complete("blind"))
 [Suggestion(id='blinding', text='Blinding Lights – The Weeknd', score=0.5666, kind=MatchKind.PREFIX, layer='songs')]
 ```
 
-As with engines, open clients in each worker after a pre-forking server forks; see
+As with engines, a client opened before a pre-forking server forks keeps working in the workers; see
 [Serverless deployment](serverless.md#forking-servers).
 
 ## Stats

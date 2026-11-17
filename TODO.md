@@ -24,19 +24,8 @@ Open items: measurements still to make, and gaps the benchmarks show. Remove an 
   each part's documents dominate.
 - **Memory after open**, where tantivy keeps less resident.
 - **AmazonQAC**: one-typo and multi-word p99 against tantivy, and uniform typo'd targets against Meilisearch.
-- **Match kinds and scores on typos.** `headphnes` is labelled `infix` rather than `fuzzy`, and the typo'd
-  `playstaton` scores above the clean `play`; check how a corrected word's kind and score are carried.
 
 ## API
 
 - **Queued writes for collections.** `completype.Client(..., writes="queued")` routing `add` and `delete`
   through the inbox and a lease-elected ingestor, for fleets of writers whose commits keep colliding.
-- **Surviving `fork()`.** The shared tokio runtime does not survive a fork, so a database or engine opened
-  before a pre-forking server forks (gunicorn `--preload`) cannot be used in the children; restart the
-  runtime in a child instead of asking users to open after the fork.
-
-## Before the first release
-
-- Changelog.
-- Review the open Dependabot pull requests.
-- Check that CI passes once the repository is public, and deploy the docs from CI instead of by hand.

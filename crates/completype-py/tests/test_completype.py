@@ -71,6 +71,22 @@ def test_engine_layers_override_by_id():
     assert engine.names() == ["default"]
 
 
+def test_layer_weights_raise_a_layer_and_default_to_one_scale():
+    engine = Engine()
+    engine.publish(
+        {
+            "shared": Index.from_documents([{"id": 1, "text": "Data Science", "popularity": 0.9}]),
+            "own": Index.from_documents([{"id": 2, "text": "Data Stewardship", "popularity": 0.3}]),
+        }
+    )
+    ids = lambda **kw: [h.id for h in engine.complete("data s", ["shared", "own"], **kw)]
+    assert ids() == ids(layer_weights=[1.0, 1.0]) == [1, 2]
+    assert ids(layer_weights=[1.0, 10.0]) == [2, 1]
+    assert [h.id for h in engine.namespace("default").complete("data s", ["shared", "own"], layer_weights=[1, 10])] == [2, 1]
+    with pytest.raises(ValueError):
+        engine.complete("data s", ["shared", "own"], layer_weights=[0.0])
+
+
 def test_namespaces_hold_a_version_and_name_what_is_missing():
     engine = Engine()
     tenant = Index([Segment.build([{"id": 2, "text": "Machine Vision Systems", "popularity": 1.0}])], max_score=1000.0)

@@ -281,9 +281,11 @@ impl Variants {
         drop(bits);
 
         let counts: Vec<AtomicU32> = (0..=buckets).map(|_| AtomicU32::new(0)).collect();
-        (0..groups).into_par_iter().for_each(|group| {
-            variants(group, &mut |v| {
-                counts[Self::bucket(v, u64::from(buckets)) as usize + 1].fetch_add(1, Relaxed);
+        crate::threads::global(|| {
+            (0..groups).into_par_iter().for_each(|group| {
+                variants(group, &mut |v| {
+                    counts[Self::bucket(v, u64::from(buckets)) as usize + 1].fetch_add(1, Relaxed);
+                })
             })
         });
         let mut offsets: Vec<u32> = counts.into_iter().map(AtomicU32::into_inner).collect();
@@ -314,13 +316,15 @@ impl Variants {
             next.extend(offsets[lo..hi].iter().map(|&o| o - base));
             {
                 let (held, cursors) = (atomic(&mut slots[..size]), atomic(&mut next));
-                (0..groups).into_par_iter().for_each(|group| {
-                    variants(group, &mut |v| {
-                        let bucket = Self::bucket(v, u64::from(buckets)) as usize;
-                        if (lo..hi).contains(&bucket) {
-                            let slot = cursors[bucket - lo].fetch_add(1, Relaxed);
-                            held[slot as usize].store(group as u32, Relaxed);
-                        }
+                crate::threads::global(|| {
+                    (0..groups).into_par_iter().for_each(|group| {
+                        variants(group, &mut |v| {
+                            let bucket = Self::bucket(v, u64::from(buckets)) as usize;
+                            if (lo..hi).contains(&bucket) {
+                                let slot = cursors[bucket - lo].fetch_add(1, Relaxed);
+                                held[slot as usize].store(group as u32, Relaxed);
+                            }
+                        })
                     })
                 });
             }
@@ -1511,10 +1515,12 @@ impl WordTable {
     fn sorted(self) -> SortedWords {
         let mut words: Vec<(Box<str>, u32)> = self.ids.into_iter().collect();
         // Term-key order: a word sorts after the words it is a prefix of, as its key ends in 0xff.
-        words.par_sort_unstable_by(|(a, _), (b, _)| {
-            let (a, b) = (a.as_bytes(), b.as_bytes());
-            let n = a.len().min(b.len());
-            a[..n].cmp(&b[..n]).then(b.len().cmp(&a.len()))
+        crate::threads::global(|| {
+            words.par_sort_unstable_by(|(a, _), (b, _)| {
+                let (a, b) = (a.as_bytes(), b.as_bytes());
+                let n = a.len().min(b.len());
+                a[..n].cmp(&b[..n]).then(b.len().cmp(&a.len()))
+            })
         });
         let mut postings = self.postings;
         let mut out = SortedWords {
@@ -1909,7 +1915,8 @@ fn write_sections(
             w.finish()?;
         }
     } else {
-        let parts: Vec<Result<Vec<u8>, Error>> = sections.into_par_iter().map(section).collect();
+        let parts: Vec<Result<Vec<u8>, Error>> =
+            crate::threads::global(|| sections.into_par_iter().map(section).collect());
         for part in parts {
             sink.put(&part?)?;
         }
@@ -1952,8 +1959,10 @@ impl KeyArena {
     fn sorted_groups(&mut self) -> Vec<(usize, usize)> {
         let bytes = &self.bytes;
         let slice = |e: &(u32, u32, u32)| &bytes[e.0 as usize..(e.0 + e.1) as usize];
-        self.entries
-            .par_sort_unstable_by(|a, b| slice(a).cmp(slice(b)).then(a.2.cmp(&b.2)));
+        let entries = &mut self.entries;
+        crate::threads::global(|| {
+            entries.par_sort_unstable_by(|a, b| slice(a).cmp(slice(b)).then(a.2.cmp(&b.2)))
+        });
         self.entries
             .dedup_by(|a, b| a.2 == b.2 && slice(a) == slice(b));
         let mut groups = Vec::new();

@@ -173,7 +173,8 @@ fn corrections_keep_short_words_and_the_word_being_typed() {
             .map(|s| s.id)
             .collect::<Vec<_>>()
     };
-    assert_eq!(ids("welcoem to"), [1]);
+    // "to" holds "Welcome to the Jungle" first; "Welcome Home" only fills the list below it.
+    assert_eq!(ids("welcoem to"), [1, 2]);
     assert_eq!(ids("the sercet wor"), [3]);
     let direct = index.complete("welcome to", 10);
     assert_eq!((direct[0].id, direct[0].kind), (1, MatchKind::Prefix));
@@ -222,6 +223,48 @@ fn a_small_layer_scores_on_the_scale_of_the_first() {
     };
     assert_eq!(scores(&alone), scores(&layered));
     assert_eq!(layered[1].layer, 1);
+}
+
+#[test]
+fn layer_weights_scale_a_layer_and_default_to_the_common_scale() {
+    let engine = Engine::new();
+    engine.publish([
+        (
+            "shared".to_owned(),
+            Some(Arc::new(
+                Index::from_documents([Document::new(1, "Data Science", 0.9)]).unwrap(),
+            )),
+        ),
+        (
+            "own".to_owned(),
+            Some(Arc::new(
+                Index::from_documents([Document::new(2, "Data Stewardship", 0.3)]).unwrap(),
+            )),
+        ),
+    ]);
+    let layers = ["shared", "own"];
+    let ids = |options: SearchOptions| -> Vec<u64> {
+        let hits = engine.complete_with(&layers, "data s", &options).unwrap();
+        hits.iter().map(|h| h.suggestion.id).collect()
+    };
+    let plain = engine.complete(&layers, "data s", 10).unwrap();
+    let unit = engine
+        .complete_with(
+            &layers,
+            "data s",
+            &SearchOptions::new(10).layer_weights([1.0, 1.0]),
+        )
+        .unwrap();
+    assert_eq!(plain, unit);
+    assert_eq!(ids(SearchOptions::new(10)), [1, 2]);
+    assert_eq!(
+        ids(SearchOptions::new(10).layer_weights([1.0, 10.0])),
+        [2, 1]
+    );
+    for bad in [vec![0.0], vec![-1.0], vec![f64::NAN], vec![1.0, 1.0, 1.0]] {
+        let options = SearchOptions::new(10).layer_weights(bad);
+        assert!(engine.complete_with(&layers, "data s", &options).is_err());
+    }
 }
 
 #[test]
@@ -395,6 +438,56 @@ fn a_correction_in_one_layer_ranks_below_a_direct_match_in_another() {
         .map(|h| (h.suggestion.id, h.suggestion.kind))
         .collect();
     assert_eq!(order, [(2, MatchKind::Prefix), (1, MatchKind::Fuzzy)]);
+}
+
+#[test]
+fn a_corrected_long_word_is_fuzzy_and_a_split_one_is_not() {
+    let index = Index::from_documents([
+        Document::new(1, "PlayStation 5 Console", 0.9),
+        Document::new(2, "Bose QuietComfort Headphones", 0.7),
+        Document::new(3, "Playing Cards Deck", 0.5),
+    ])
+    .unwrap();
+    let kinds = |q: &str| -> Vec<(u64, MatchKind)> {
+        index
+            .complete(q, 5)
+            .iter()
+            .map(|s| (s.id, s.kind))
+            .collect()
+    };
+    assert_eq!(kinds("playstaton"), [(1, MatchKind::Fuzzy)]);
+    assert_eq!(kinds("headphnes"), [(2, MatchKind::Fuzzy)]);
+    assert_eq!(kinds("headphones"), [(2, MatchKind::Infix)]);
+    assert_eq!(kinds("playingcards"), [(3, MatchKind::Prefix)]);
+}
+
+#[test]
+fn a_word_split_keeps_the_matches_the_query_has_as_typed() {
+    let index = Index::from_documents([
+        Document::new(1, "Deutsches Versicherungsrecht", 0.9),
+        Document::new(2, "Lebensversicherungsrecht", 0.8),
+        Document::new(3, "IEC", 0.7),
+        Document::new(4, "Indexbasierte Versicherung", 0.6),
+    ])
+    .unwrap();
+    // "versicherungsrec" splits into "versicherung iec", which matches nothing.
+    let hits = index.complete("versicherungsrec", 5);
+    assert_eq!(ids(&hits, |s| s.id), [1], "{hits:?}");
+    assert_eq!(hits[0].kind, MatchKind::Infix);
+}
+
+#[test]
+fn matches_without_a_short_word_fill_the_list_below_those_with_it() {
+    let index = Index::from_documents([
+        Document::new(1, "HR policy and compliance", 0.5),
+        Document::new(2, "Public policy", 0.9),
+        Document::new(3, "Monetary policy", 0.8),
+    ])
+    .unwrap();
+    let hits = index.complete("HR policy", 5);
+    assert_eq!(ids(&hits, |s| s.id), [1, 2, 3], "{hits:?}");
+    assert!(hits[0].score > hits[1].score, "{hits:?}");
+    assert_eq!(ids(&index.complete("HR policy", 1), |s| s.id), [1]);
 }
 
 #[test]

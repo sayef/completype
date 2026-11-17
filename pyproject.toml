@@ -26,8 +26,9 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/sayef/completype"
-Documentation = "https://github.com/sayef/completype#readme"
+Homepage = "https://completype.pages.dev"
+Documentation = "https://completype.pages.dev"
+Source = "https://github.com/sayef/completype"
 Changelog = "https://github.com/sayef/completype/blob/main/CHANGELOG.md"
 Issues = "https://github.com/sayef/completype/issues"
 
