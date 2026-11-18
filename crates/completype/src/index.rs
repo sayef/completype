@@ -372,11 +372,12 @@ impl Index {
         })
     }
 
-    /// Whether this index holds or deletes `id`, so that it overrides `id` in earlier layers.
-    pub(crate) fn covers(&self, id: u64) -> bool {
-        self.segments
-            .iter()
-            .any(|s| s.local_of(id).is_some() || s.deletes().binary_search(&id).is_ok())
+    /// Whether a live document has `id`, so that it overrides `id` in earlier layers.
+    pub(crate) fn holds(&self, id: u64) -> bool {
+        self.segments.iter().enumerate().rev().any(|(i, seg)| {
+            seg.local_of(id)
+                .is_some_and(|local| !self.hidden[self.offsets[i] as usize + local])
+        })
     }
 
     /// The live document with string key `key`.

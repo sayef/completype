@@ -27,7 +27,9 @@ A query passes its layers in order. Each layer is searched on its own, and the r
 
 - **Edits**: a later layer that holds a document with the same id replaces the earlier version, even for
   queries only the earlier text matched.
-- **Deletions**: a layer can delete ids it does not hold. They disappear from every earlier layer.
+- **Hiding**: a layer hides an id from every earlier layer with a document of that id and no text. Deleting
+  that document from the layer shows the earlier version again: a deletion only removes the layer's own
+  documents, so a layer's results never depend on how its segments were compacted.
 - **Additions**: documents only a later layer holds are completed alongside the rest.
 - **One scale**: scores from every layer are put on the first layer's scale, so a song that a layer copies
   unchanged ranks exactly where it did, and raising its popularity raises it by as much as it would in the
@@ -42,7 +44,7 @@ no layer of their own yet (see [Missing layers](#missing-layers)).
 
     ```python
     import completype
-    from completype import Engine, Index, Segment
+    from completype import Engine, Index
 
     catalog = Index.from_documents([
         {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -84,13 +86,14 @@ The examples below build on this catalogue.
 ## Tenants
 
 A radio station using the shared catalogue wants the remastered "Bohemian Rhapsody", its own live session
-of "Dancing Queen", and no "Killer Queen". Its layer holds two songs and one deletion:
+of "Dancing Queen", and no "Killer Queen". Its layer holds two songs and one empty document:
 
 ```python
-radio = Index([Segment.build([
+radio = Index.from_documents([
     {"id": "bohemian", "text": "Bohemian Rhapsody (Remastered 2011) – Queen", "popularity": 0.95},
     {"id": "session", "text": "Dancing Queen (Live Session) – ABBA", "popularity": 0.8},
-], deletes=["killer"])])
+    {"id": "killer", "text": ""},
+])
 engine.publish({"radio": radio})
 
 show("queen", ["catalog"])
@@ -159,7 +162,7 @@ that may not be shown, for licensing or legal reasons, in every query that inclu
 
 ```python
 promo = Index.from_documents([{"id": "dark", "text": "Dancing in the Dark – Bruce Springsteen", "popularity": 1.0}])
-takedowns = Index([Segment.build([], deletes=["billie"])])
+takedowns = Index.from_documents([{"id": "billie", "text": ""}])
 engine.publish({"promo": promo, "takedowns": takedowns})
 
 show("danc", ["catalog", "promo"])

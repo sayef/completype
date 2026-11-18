@@ -293,7 +293,7 @@ fn any_popularity_ranks_above_none() {
 }
 
 #[test]
-fn later_layers_hide_renamed_and_deleted_documents() {
+fn later_layers_hide_renamed_and_hidden_documents() {
     let shared = Index::from_documents([
         Document::keyed("mv", "Machine Vision", 0.9),
         Document::keyed("ml", "Machine Learning", 0.5),
@@ -303,8 +303,11 @@ fn later_layers_hide_renamed_and_deleted_documents() {
     let tenant = Index::new(
         vec![Arc::new(
             Segment::build(
-                [Document::keyed("mv", "Computer Vision", 0.9)],
-                [key_id("mt")],
+                [
+                    Document::keyed("mv", "Computer Vision", 0.9),
+                    Document::keyed("mt", "", 0.0),
+                ],
+                [],
             )
             .unwrap(),
         )],
@@ -328,6 +331,35 @@ fn later_layers_hide_renamed_and_deleted_documents() {
         (vision[0].suggestion.text.as_str(), vision[0].layer),
         ("Computer Vision", 1)
     );
+}
+
+#[test]
+fn deleting_a_layers_own_documents_shows_the_earlier_versions_again() {
+    let shared = Index::from_documents([
+        Document::keyed("mt", "Machine Translation", 0.4),
+        Document::keyed("ml", "Machine Learning", 0.5),
+    ])
+    .unwrap();
+    let hidden = Segment::build([Document::keyed("mt", "", 0.0)], []).unwrap();
+    let removed = Segment::build([], [key_id("mt"), key_id("ml")]).unwrap();
+    let tenant = Index::new(
+        vec![Arc::new(hidden), Arc::new(removed)],
+        IndexOptions::default(),
+    )
+    .unwrap();
+    let engine = Engine::new();
+    engine.publish([
+        ("shared".to_owned(), Some(Arc::new(shared))),
+        ("acme".to_owned(), Some(Arc::new(tenant))),
+    ]);
+    let mut found: Vec<_> = engine
+        .complete(&["shared", "acme"], "machine", 10)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.suggestion.key.unwrap(), l.layer))
+        .collect();
+    found.sort();
+    assert_eq!(found, [("ml".to_owned(), 0), ("mt".to_owned(), 0)]);
 }
 
 #[test]

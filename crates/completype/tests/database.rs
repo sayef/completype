@@ -395,3 +395,53 @@ async fn names_are_validated() {
     t.append_documents("radio/en", docs(0..2, "d"), []).unwrap();
     assert!(matches!(t.commit().await, Err(Error::InvalidInput(_))));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn layered_results_do_not_change_on_compaction() {
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "layers").await {
+        let engine = Engine::new();
+        let replica = Replica::new(ds.clone(), IndexOptions::default());
+        let machine = || async {
+            replica.sync(&engine).await.unwrap();
+            let mut found: Vec<(u64, usize)> = engine
+                .complete(&["base", "acme"], "machine", 10)
+                .unwrap()
+                .into_iter()
+                .map(|l| (l.suggestion.id, l.layer))
+                .collect();
+            found.sort();
+            found
+        };
+        let commit = |index: &'static str, documents: Vec<Document>, deletes: Vec<u64>| {
+            let ds = ds.clone();
+            async move {
+                let mut t = ds.begin().await.unwrap();
+                t.append_documents(index, documents, deletes).unwrap();
+                t.commit().await.unwrap();
+            }
+        };
+        let base = ["Machine Translation", "Machine Learning", "Machine Vision"];
+        let base = (1..=3).map(|i| Document::new(i, base[i as usize - 1], 0.5));
+        commit("base", base.collect(), vec![]).await;
+        // acme hides 1 with an empty document and renames 3, then deletes both, then hides 2.
+        let acme = vec![
+            Document::new(1, "", 0.0),
+            Document::new(3, "Computer Vision", 0.5),
+        ];
+        commit("acme", acme, vec![]).await;
+        assert_eq!(machine().await, [(2, 0)]);
+        commit("acme", vec![], vec![1, 3]).await;
+        assert_eq!(machine().await, [(1, 0), (2, 0), (3, 0)]);
+        commit("acme", vec![Document::new(2, "", 0.0)], vec![]).await;
+        assert_eq!(machine().await, [(1, 0), (3, 0)]);
+
+        let full = CompactionPolicy::default().max_segments(1);
+        ds.compact("acme", &full)
+            .await
+            .unwrap()
+            .expect("three segments are due");
+        assert_eq!(machine().await, [(1, 0), (3, 0)]);
+        wipe(&ds).await;
+    }
+}
