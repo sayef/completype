@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/sayef/completype/compare/v0.2.0...v0.2.1) - 2026-11-18
+
 ### Added
 
 - Stored fields: `Document.fields` (`with_field` in Rust, `fields` in Python) are kept with a document
