@@ -71,6 +71,15 @@ def test_engine_layers_override_by_id():
     assert engine.names() == ["default"]
 
 
+def test_a_layer_hides_with_empty_documents_and_deleting_them_shows_the_original():
+    hidden = Segment.build([{"id": 1, "text": ""}])
+    engine = Engine()
+    engine.publish({"default": Index([Segment.build(DOCS)], max_score=1000.0), "acme": Index([hidden])})
+    assert 1 not in [h.id for h in engine.complete("machine", ["default", "acme"])]
+    engine.publish({"acme": Index([hidden, Segment.build([], deletes=[1])])})
+    assert 1 in [h.id for h in engine.complete("machine", ["default", "acme"])]
+
+
 def test_layer_weights_raise_a_layer_and_default_to_one_scale():
     engine = Engine()
     engine.publish(

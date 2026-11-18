@@ -7,7 +7,7 @@ namespaces that switch together.
 import tempfile
 
 import completype
-from completype import Engine, Index, Segment
+from completype import Engine, Index
 
 catalog = Index.from_documents([
     {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
@@ -28,10 +28,11 @@ def show(query, layers, **options):
 
 
 print("\n# tenant")
-radio = Index([Segment.build([
+radio = Index.from_documents([
     {"id": "bohemian", "text": "Bohemian Rhapsody (Remastered 2011) – Queen", "popularity": 0.95},
     {"id": "session", "text": "Dancing Queen (Live Session) – ABBA", "popularity": 0.8},
-], deletes=["killer"])])
+    {"id": "killer", "text": ""},
+])
 engine.publish({"radio": radio})
 print(show("queen", ["catalog"]))
 print(show("queen", ["catalog", "radio"]))
@@ -54,7 +55,7 @@ print(show("danc", ["catalog", "user-42"]))
 
 print("\n# promotion and takedown")
 promo = Index.from_documents([{"id": "dark", "text": "Dancing in the Dark – Bruce Springsteen", "popularity": 1.0}])
-takedown = Index([Segment.build([], deletes=["billie"])])
+takedown = Index.from_documents([{"id": "billie", "text": ""}])
 engine.publish({"promo": promo, "takedowns": takedown})
 print(show("danc", ["catalog", "promo"]))
 print(show("bill", ["catalog"]), show("bill", ["catalog", "takedowns"]))

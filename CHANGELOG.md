@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** in a layered search, a layer hides an id from earlier layers only while it holds a live
+  document with that id; hide one with a document that has no text. A deletion now only removes the
+  layer's own documents. Before, a deletion also hid the id in every earlier layer, but compaction could
+  drop the deletion, so results changed depending on how a layer's segments had been merged, and
+  deleting a layer's override hid the original until then. A layer that hid ids with `deletes` should
+  write empty documents instead.
+
 ## [0.1.3](https://github.com/sayef/completype/compare/v0.1.2...v0.1.3) - 2026-11-18
 
 ### Fixed

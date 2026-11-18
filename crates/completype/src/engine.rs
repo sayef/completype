@@ -473,7 +473,7 @@ fn common_scale(layers: &[Option<&Index>], index: &Index) -> f64 {
 }
 
 /// Later layers override earlier ones per id, keeping the earlier position; then sorts by score.
-/// A layer that holds or deletes an id hides it from earlier layers even when it does not match.
+/// A layer holding a live document with an id hides it from earlier layers even when it does not match.
 fn merge<S>(
     layers: &[Option<&Index>],
     per_layer: Vec<Vec<S>>,
@@ -500,7 +500,7 @@ fn merge<S>(
         !layers[entry.layer + 1..]
             .iter()
             .flatten()
-            .any(|index| index.covers(id))
+            .any(|index| index.holds(id))
     });
     // A correction from one layer never outranks a direct match from another.
     merged.sort_by(|a, b| {
