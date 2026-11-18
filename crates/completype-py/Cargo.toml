@@ -22,3 +22,7 @@ completype_rs = { package = "completype", path = "../completype", features = ["a
 # Not on macOS, where every mimalloc in a process shares fixed thread slots and pyarrow ships one.
 [target.'cfg(target_os = "linux")'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
+
+# musl refuses initial-exec TLS in a library loaded with dlopen, which every Python extension is.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }

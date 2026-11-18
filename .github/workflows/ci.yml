@@ -94,3 +94,18 @@ jobs:
       - run: pip install --no-index --find-links dist completype
       - run: pytest crates/completype-py/tests
       - run: python crates/completype-py/examples/quickstart.py && python crates/completype-py/examples/live_updates.py && python crates/completype-py/examples/layers.py
+
+  # The release builds this wheel too; importing it on Alpine catches what only musl's loader refuses.
+  musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: musllinux_1_2
+          args: --release --out dist
+      - run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" python:3.12-alpine sh -c '
+            pip install -q --no-index --find-links /dist completype &&
+            python -c "import completype; i = completype.Index.from_documents([{\"id\": 1, \"text\": \"Bohemian Rhapsody\"}]); assert [s.text for s in i.complete(\"bohemain\")] == [\"Bohemian Rhapsody\"]"'
