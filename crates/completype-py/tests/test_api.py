@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 import sys
 
@@ -162,3 +163,29 @@ def test_writer_takes_columns_like_rows(tmp_path):
         index = completype.Index(writer.finish())
         built[name] = [(s.id, s.text, s.score) for q in ("l", "r", "travel") for s in index.complete(q, 10)]
     assert built["rows"] == built["columns"] and built["rows"]
+
+
+def test_only_completype_logs_below_warning(tmp_path):
+    # Storage clients log requests and credentials at debug and info; only their warnings may pass.
+    code = f"""
+import json, logging, completype
+records = []
+class Keep(logging.Handler):
+    def emit(self, record): records.append(record)
+logging.basicConfig(level=logging.DEBUG, handlers=[Keep()])
+txn = completype.connect({str(tmp_path)!r}).begin()
+txn.append("songs", [{{"id": "a", "text": "Billie Jean"}}])
+txn.commit()
+options = {{"aws_endpoint": "http://127.0.0.1:9", "aws_allow_http": "true", "aws_region": "eu-west-1",
+           "aws_access_key_id": "key", "aws_secret_access_key": "secret"}}
+try:
+    completype.connect("s3://bucket/db", options).latest_version()
+except completype.StorageError:
+    pass
+print(json.dumps(sorted({{r.name for r in records if r.levelno < logging.WARNING}})))
+"""
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    names = json.loads(out.stdout)
+    assert "completype.database" in names
+    assert all(name.startswith("completype") for name in names), names

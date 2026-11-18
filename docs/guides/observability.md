@@ -89,7 +89,8 @@ engine = db.engine()
 2026-10-04 22:20:50,663 completype.database INFO replica synced version=1 segments_loaded=1 ms=0
 ```
 
-Set the `completype` logger to `DEBUG` to include segment builds.
+Set the `completype` logger to `DEBUG` to include segment builds. The storage clients completype uses reach
+`logging` only with warnings and errors, so their request and credential details never do.
 
 !!! note "Configure logging before the first completype call"
     The bridge to `logging` caches each logger's level the first time that logger is used. Set levels at
