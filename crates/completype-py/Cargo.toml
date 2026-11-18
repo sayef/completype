@@ -14,7 +14,7 @@ name = "completype"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py311"] }
 log = "0.4"
 pyo3-log = "0.13"
 tracing = { version = "0.1", default-features = false, features = ["log"] }
