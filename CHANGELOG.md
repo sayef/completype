@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/sayef/completype/compare/v0.1.2...v0.1.3) - 2026-11-18
+
+### Fixed
+
+- Python: the storage clients completype uses reach `logging` only with warnings and errors. Before, their
+  debug and info messages did too, printing credential loading details, such as the AWS access key id and
+  account, and request details into application logs.
+- The musllinux wheel imports on Alpine instead of failing with "initial-exec TLS resolves to dynamic
+  definition".
+
 ## [0.1.2](https://github.com/sayef/completype/compare/v0.1.1...v0.1.2) - 2026-11-17
 
 ### Added
