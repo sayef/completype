@@ -292,9 +292,11 @@ impl Segment {
                 let (p, l) = split(order[i]);
                 (parts[p].segment, l)
             };
+            let has_fields = parts.iter().any(|p| p.segment.fields.is_some());
             write_header(
                 &mut sink,
                 config,
+                if has_fields { FIELDS_VERSION } else { VERSION },
                 n,
                 |i| {
                     let (s, l) = doc(i);
@@ -364,7 +366,16 @@ impl Segment {
                             Some((i as u32, Row::Code(code, scale)))
                         })
                         .collect();
-                    Vectors::write(w, dim, config.vector_bits, &rows)
+                    Vectors::write(w, dim, config.vector_bits, &rows)?;
+                    if has_fields {
+                        FsstColumn::write(w, n, |i, out| {
+                            let (s, l) = doc(i);
+                            if let Some(fields) = &s.fields {
+                                fields.append(l, out)
+                            }
+                        })?;
+                    }
+                    Ok(())
                 }),
             ];
             write_sections(&mut sink, streaming, sections)?;

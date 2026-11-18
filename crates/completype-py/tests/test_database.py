@@ -197,3 +197,71 @@ def test_tags_are_accepted_everywhere_and_ignored_by_local_stores(tmp_path):
     completype.Store(str(tmp_path / "store"), tags=tags).put("a", b"x")
     client = completype.Client(str(tmp_path / "client"), sync_every=None, tags=tags)
     client.create_collection("songs").add(DOCS[:2])
+
+
+def test_stored_fields_come_back_with_documents_and_survive_compaction(tmp_path):
+    database = completype.connect(str(tmp_path))
+    for key, text in [("ml", "Machine Learning"), ("mv", "Machine Vision")]:
+        txn = database.begin()
+        txn.append("skills", [{"id": key, "text": text, "fields": {"title_en": text}}])
+        txn.commit()
+    database.namespace("default").compact("skills", max_segments=1, until_done=True)
+    engine = database.engine(sync_every=None)
+    engine.sync()
+    document = engine.namespace("default").get("skills").get("mv")
+    assert document.fields == {"title_en": "Machine Vision"}
+    assert completype.Document("x", "X", fields={"a": "b"}).to_dict()["fields"] == {"a": "b"}
+
+
+def test_engine_transactions_write_only_what_changed(tmp_path):
+    database = completype.connect(str(tmp_path))
+    rows = [{"id": i, "text": f"Skill {i}", "popularity": 0.5} for i in range(5)]
+    txn = database.begin()
+    txn.append("skills", rows)
+    txn.commit()
+    engine = database.engine(sync_every=None)
+    engine.sync()
+
+    txn = engine.begin()
+    txn.sync("skills", rows)
+    assert txn.is_empty()
+
+    txn = engine.begin()
+    txn.sync("skills", [{"id": 1, "text": "Renamed", "popularity": 0.5}], ids=[1, 2])
+    txn.hide("skills", [3])
+    txn.commit()
+    engine.sync()
+    skills = engine.namespace("default").get("skills")
+    assert [skills.get(i).text if skills.get(i) else None for i in range(5)] == [
+        "Skill 0", "Renamed", None, "", "Skill 4"
+    ]
+
+    txn = engine.begin()
+    txn.prune("skills", [0, 1])
+    txn.commit()
+    engine.sync()
+    assert engine.namespace("default").get("skills").ids() == [0, 1]
+    with pytest.raises(completype.InvalidInputError):
+        database.begin().sync("skills", rows)
+
+
+def test_transact_retries_when_another_writer_got_there_first(tmp_path):
+    database = completype.connect(str(tmp_path))
+    txn = database.begin()
+    txn.append("skills", [{"id": 1, "text": "Skill 1"}])
+    txn.commit()
+    engine = database.engine(sync_every=None)
+    other = database.engine(sync_every=None)
+    calls = []
+
+    def write(txn):
+        calls.append(txn.read_version)
+        if len(calls) == 1:
+            other.transact(lambda t: t.sync("skills", [{"id": 1, "text": "Theirs"}], ids=[1]))
+        txn.sync("skills", [{"id": 1, "text": "Ours"}], ids=[1])
+
+    assert engine.transact(write)["version"] == 3
+    assert calls == [1, 2]
+    assert engine.transact(lambda txn: txn.sync("skills", [{"id": 1, "text": "Ours"}], ids=[1])) is None
+    engine.sync()
+    assert engine.namespace("default").get("skills").get(1).text == "Ours"

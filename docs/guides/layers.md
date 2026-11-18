@@ -27,9 +27,10 @@ A query passes its layers in order. Each layer is searched on its own, and the r
 
 - **Edits**: a later layer that holds a document with the same id replaces the earlier version, even for
   queries only the earlier text matched.
-- **Hiding**: a layer hides an id from every earlier layer with a document of that id and no text. Deleting
-  that document from the layer shows the earlier version again: a deletion only removes the layer's own
-  documents, so a layer's results never depend on how its segments were compacted.
+- **Hiding**: a layer hides an id from every earlier layer with a document of that id and no text, which
+  a transaction's `hide(index, ids)` writes. Deleting that document from the layer shows the earlier
+  version again: a deletion only removes the layer's own documents, so a layer's results never depend on
+  how its segments were compacted.
 - **Additions**: documents only a later layer holds are completed alongside the rest.
 - **One scale**: scores from every layer are put on the first layer's scale, so a song that a layer copies
   unchanged ranks exactly where it did, and raising its popularity raises it by as much as it would in the

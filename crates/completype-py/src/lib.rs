@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -163,7 +163,7 @@ fn query_vector(py: Python<'_>, vector: &Bound<'_, PyAny>) -> PyResult<Vec<f32>>
     }
 }
 
-const FIELDS: [&str; 7] = [
+const FIELDS: [&str; 8] = [
     "id",
     "text",
     "popularity",
@@ -171,6 +171,7 @@ const FIELDS: [&str; 7] = [
     "abbreviations",
     "contexts",
     "vector",
+    "fields",
 ];
 
 /// Strings from a list-like value; `None` and pandas' NaN mean none.
@@ -233,6 +234,11 @@ fn document_from_dict(
     }
     if let Some(v) = get("vector") {
         doc = doc.with_vector(query_vector(py, &v)?);
+    }
+    if let Some(v) = get("fields") {
+        doc.fields = v
+            .extract()
+            .map_err(|_| invalid("fields must be a dict of strings to strings"))?;
     }
     Ok(doc)
 }
@@ -395,7 +401,7 @@ struct Document(completype_rs::Document);
 #[pymethods]
 impl Document {
     #[new]
-    #[pyo3(signature = (id, text, popularity = 0.0, *, synonyms = Vec::new(), abbreviations = Vec::new(), contexts = Vec::new(), vector = None))]
+    #[pyo3(signature = (id, text, popularity = 0.0, *, synonyms = Vec::new(), abbreviations = Vec::new(), contexts = Vec::new(), vector = None, fields = BTreeMap::new()))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -406,6 +412,7 @@ impl Document {
         abbreviations: Vec<String>,
         contexts: Vec<String>,
         vector: Option<Bound<'_, PyAny>>,
+        fields: BTreeMap<String, String>,
     ) -> PyResult<Self> {
         let mut doc = match id {
             Id::Int(id) => completype_rs::Document::new(id, text, popularity),
@@ -423,6 +430,7 @@ impl Document {
         if let Some(v) = vector {
             doc = doc.with_vector(query_vector(py, &v)?);
         }
+        doc.fields = fields;
         Ok(Self(doc))
     }
 
@@ -456,6 +464,11 @@ impl Document {
         self.0.contexts.clone()
     }
 
+    #[getter]
+    fn fields(&self) -> BTreeMap<String, String> {
+        self.0.fields.clone()
+    }
+
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let out = PyDict::new(py);
         out.set_item("id", self.id(py)?)?;
@@ -464,6 +477,7 @@ impl Document {
         out.set_item("synonyms", self.synonyms())?;
         out.set_item("abbreviations", self.abbreviations())?;
         out.set_item("contexts", self.contexts())?;
+        out.set_item("fields", self.fields())?;
         Ok(out)
     }
 
@@ -1124,6 +1138,13 @@ impl Index {
         doc.map(Document)
     }
 
+    /// The numeric ids of the live documents; a keyed document's is `key_id(key)`.
+    fn ids(&self) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.0.ids().collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Merges the live documents into one segment; with `path`, written there as it is produced.
     /// `build_threads` speed up the merge without holding more of it in memory.
     #[pyo3(signature = (path = None, build_threads = 1))]
@@ -1182,6 +1203,12 @@ struct Engine {
 }
 
 impl Engine {
+    fn replica(&self) -> PyResult<&Arc<completype_rs::Replica>> {
+        self.replica.as_ref().ok_or_else(|| {
+            invalid("this engine does not follow a database; create it with Database.engine()")
+        })
+    }
+
     /// Starts this process's background sync on first use.
     fn follow(&self) {
         let (Some(replica), Some(every)) = (&self.replica, self.sync_every) else {
@@ -1307,11 +1334,60 @@ impl Engine {
 
     /// Loads and publishes the database's latest version; returns it if new, else `None`.
     fn sync(&self, py: Python<'_>) -> PyResult<Option<u64>> {
-        let replica = self.replica.as_ref().ok_or_else(|| {
-            invalid("this engine does not follow a database; create it with Database.engine()")
-        })?;
+        let replica = self.replica()?;
         py.detach(|| completype_rs::block_on(replica.sync(&self.engine)))
             .map_err(to_py_err)
+    }
+
+    /// A transaction against the version this engine serves, in the default namespace; its `sync`
+    /// and `prune` compare with what the engine serves.
+    fn begin(&self, py: Python<'_>) -> PyResult<Transaction> {
+        let replica = self.replica()?;
+        let txn = py
+            .detach(|| completype_rs::block_on(replica.begin(&self.engine)))
+            .map_err(to_py_err)?;
+        Ok(Transaction {
+            txn: Mutex::new(Some(txn)),
+            namespace: completype_rs::DEFAULT_NAMESPACE.to_owned(),
+            options: replica.database().build_options(),
+        })
+    }
+
+    /// Syncs, then calls `function` with a strict transaction from `begin()` and commits it; when
+    /// another writer changed an index it touches since, does it all again, up to `attempts` times.
+    /// Returns the new manifest, or None if `function` staged nothing.
+    #[pyo3(signature = (function, attempts = 10))]
+    fn transact<'py>(
+        &self,
+        py: Python<'py>,
+        function: &Bound<'py, PyAny>,
+        attempts: usize,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        for attempt in 1..=attempts.max(1) {
+            self.sync(py)?;
+            let txn = Bound::new(py, self.begin(py)?)?;
+            txn.get().with(|t| {
+                t.strict(true);
+                Ok(())
+            })?;
+            function.call1((txn.clone(),))?;
+            let staged = txn
+                .get()
+                .txn
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+            let staged = staged.ok_or_else(|| invalid("transaction already committed"))?;
+            if staged.is_empty() {
+                return Ok(None);
+            }
+            match py.detach(|| completype_rs::block_on(staged.commit())) {
+                Ok(manifest) => return manifest_dict(py, &manifest).map(Some),
+                Err(completype_rs::Error::Conflict(_)) if attempt < attempts => continue,
+                Err(e) => return Err(to_py_err(e)),
+            }
+        }
+        unreachable!("the last attempt returns")
     }
 
     /// The database version served, for an engine from `Database.engine()`.
@@ -2075,6 +2151,54 @@ impl Transaction {
         })
     }
 
+    fn sync_in(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        index: &str,
+        documents: &Bound<'_, PyAny>,
+        ids: Option<Vec<Id>>,
+    ) -> PyResult<()> {
+        let docs = self::documents(py, documents, None)?;
+        let ids = ids.map(numeric_ids);
+        py.detach(|| {
+            self.with(|t| {
+                t.namespace(namespace)
+                    .sync(index, docs, ids.as_deref())
+                    .map_err(to_py_err)?;
+                Ok(())
+            })
+        })
+    }
+
+    fn prune_in(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        index: &str,
+        keep: Vec<Id>,
+    ) -> PyResult<()> {
+        let keep = numeric_ids(keep);
+        py.detach(|| {
+            self.with(|t| {
+                t.namespace(namespace)
+                    .prune(index, &keep)
+                    .map_err(to_py_err)?;
+                Ok(())
+            })
+        })
+    }
+
+    fn hide_in(&self, py: Python<'_>, namespace: &str, index: &str, ids: Vec<Id>) -> PyResult<()> {
+        let ids = numeric_ids(ids);
+        py.detach(|| {
+            self.with(|t| {
+                t.namespace(namespace).hide(index, ids).map_err(to_py_err)?;
+                Ok(())
+            })
+        })
+    }
+
     fn overwrite_in(
         &self,
         py: Python<'_>,
@@ -2110,6 +2234,37 @@ impl Transaction {
     #[getter]
     fn read_version(&self) -> PyResult<u64> {
         self.with(|t| Ok(t.read_version()))
+    }
+
+    /// Whether nothing is staged, as after a `sync` that found nothing to write; committing would
+    /// still make a new version.
+    fn is_empty(&self) -> PyResult<bool> {
+        self.with(|t| Ok(t.is_empty()))
+    }
+
+    /// Makes `ids` (ids or keys), or the whole of `index` when `ids` is None, read exactly as
+    /// `documents`, writing only what differs from what the engine served. Needs a transaction from
+    /// `Engine.begin()`.
+    #[pyo3(signature = (index, documents, ids = None))]
+    fn sync(
+        &self,
+        py: Python<'_>,
+        index: &str,
+        documents: &Bound<'_, PyAny>,
+        ids: Option<Vec<Id>>,
+    ) -> PyResult<()> {
+        self.sync_in(py, &self.namespace, index, documents, ids)
+    }
+
+    /// Deletes every document of `index` not in `keep`, as the engine served it. Needs a
+    /// transaction from `Engine.begin()`.
+    fn prune(&self, py: Python<'_>, index: &str, keep: Vec<Id>) -> PyResult<()> {
+        self.prune_in(py, &self.namespace, index, keep)
+    }
+
+    /// Hides `ids` from the layers before `index`; deleting them shows the earlier versions again.
+    fn hide(&self, py: Python<'_>, index: &str, ids: Vec<Id>) -> PyResult<()> {
+        self.hide_in(py, &self.namespace, index, ids)
     }
 
     /// Index operations in namespace `name`, committed with the rest of this transaction.
@@ -2265,6 +2420,27 @@ impl NamespaceTransaction {
 
     fn set_max_score(&self, index: &str, max_score: f64) -> PyResult<()> {
         self.txn.get().max_score_in(&self.name, index, max_score)
+    }
+
+    #[pyo3(signature = (index, documents, ids = None))]
+    fn sync(
+        &self,
+        py: Python<'_>,
+        index: &str,
+        documents: &Bound<'_, PyAny>,
+        ids: Option<Vec<Id>>,
+    ) -> PyResult<()> {
+        self.txn
+            .get()
+            .sync_in(py, &self.name, index, documents, ids)
+    }
+
+    fn prune(&self, py: Python<'_>, index: &str, keep: Vec<Id>) -> PyResult<()> {
+        self.txn.get().prune_in(py, &self.name, index, keep)
+    }
+
+    fn hide(&self, py: Python<'_>, index: &str, ids: Vec<Id>) -> PyResult<()> {
+        self.txn.get().hide_in(py, &self.name, index, ids)
     }
 }
 

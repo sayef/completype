@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Stored fields: `Document.fields` (`with_field` in Rust, `fields` in Python) are kept with a document
+  and returned with it, never searched. Segments without them are written as before, so older releases
+  still read them.
+- `Engine.begin()` (`Replica::begin` in Rust) starts a transaction against the version an engine serves.
+  Its `sync(index, documents, ids)` writes only what differs from what the engine serves, and
+  `prune(index, keep)` deletes what is no longer wanted. `Index::changes` returns what `sync` would write.
+- `Engine.transact(function)` syncs, runs `function` with a strict transaction and commits, again
+  while another writer changed an index it touches in between.
+- `Transaction.hide(index, ids)` hides ids from earlier layers, and `Transaction.is_empty()` tells whether
+  anything is staged. `Index.ids()` lists the live ids in Python.
+
 ## [0.2.0](https://github.com/sayef/completype/compare/v0.1.3...v0.2.0) - 2026-11-18
 
 ### Changed

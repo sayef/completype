@@ -15,6 +15,7 @@ tags and an embedding. completype does not have multi-field schemas. Documents g
 | `abbreviations` | `list[str]` | Codes such as `RHCP`, matched exactly by `complete`. |
 | `contexts` | `list[str]` | Tags that requests can filter on, for example a genre, tenant or language. |
 | `vector` | float array | Optional embedding; or pass `vectors=` for all documents at once. |
+| `fields` | `dict[str, str]` | Stored with the document and returned with it, never searched. |
 
 Only `id` and `text` are required.
 
@@ -60,6 +61,39 @@ Only `id` and `text` are required.
 
 `index.get(id)` returns a stored document, by int id, string key or `key_id`. In Rust, use
 `document(id)` and `document_by_key(key)`.
+
+### Stored fields
+
+`fields` keeps what a caller needs to show or route a result, such as a display name in another language
+or an owner, so it needs no second lookup. They are stored, compacted and returned with the document, but
+never searched. Names and values are strings and may not contain NUL.
+
+=== "Python"
+
+    ```python
+    from completype import Index
+
+    index = Index.from_documents([
+        {"id": "bridge", "text": "Under the Bridge – Red Hot Chili Peppers", "fields": {"album": "Blood Sugar Sex Magik", "year": "1991"}},
+    ])
+    print(index.get("bridge").fields)
+    ```
+
+=== "Rust"
+
+    ```rust
+    let index = Index::from_documents([
+        Document::keyed("bridge", "Under the Bridge – Red Hot Chili Peppers", 0.0)
+            .with_field("album", "Blood Sugar Sex Magik")
+            .with_field("year", "1991"),
+    ])?;
+    ```
+
+```text
+{'album': 'Blood Sugar Sex Magik', 'year': '1991'}
+```
+
+Segments without stored fields are written exactly as before, so older releases still read them.
 
 ## Adding, replacing and deleting
 

@@ -47,6 +47,13 @@ class AsyncEngine:
     async def sync(self):
         return await asyncio.to_thread(self._engine.sync)
 
+    async def begin(self):
+        return await asyncio.to_thread(self._engine.begin)
+
+    async def transact(self, function, attempts=10):
+        """As `Engine.transact`; `function` runs in a worker thread."""
+        return await asyncio.to_thread(self._engine.transact, function, attempts)
+
     def __getattr__(self, name):
         return getattr(self._engine, name)
 
