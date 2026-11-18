@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sayef/completype/compare/v0.1.3...v0.2.0) - 2026-11-18
+
 ### Changed
 
 - **Breaking:** in a layered search, a layer hides an id from earlier layers only while it holds a live
