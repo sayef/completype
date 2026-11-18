@@ -2897,8 +2897,12 @@ impl Collection {
 
 #[pymodule]
 fn completype(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Engine events go to Python's `logging`, under loggers named `completype.*`.
-    pyo3_log::init();
+    // completype's events reach Python's `logging` as `completype.*`; other crates' only from warnings up.
+    pyo3_log::Logger::new(m.py(), pyo3_log::Caching::LoggersAndLevels)?
+        .filter(log::LevelFilter::Warn)
+        .filter_target("completype".to_owned(), log::LevelFilter::Trace)
+        .install()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<Document>()?;
     m.add_class::<Segment>()?;

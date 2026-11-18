@@ -776,6 +776,7 @@ name = "completype-py"
 version = "0.1.2"
 dependencies = [
  "completype",
+ "log",
  "mimalloc",
  "pyo3",
  "pyo3-log",
