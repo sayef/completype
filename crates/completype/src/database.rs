@@ -9,7 +9,8 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BuildOptions, Document, Engine, Error, Index, IndexOptions, Segment, Store, DEFAULT_NAMESPACE,
+    BuildOptions, Document, Engine, Error, Index, IndexOptions, Namespace, Segment, Store,
+    DEFAULT_NAMESPACE,
 };
 
 const VERSIONS: &str = "_versions";
@@ -266,6 +267,7 @@ impl Database {
             strict: false,
             max_retries: 32,
             invalid: None,
+            served: None,
         }
     }
 
@@ -741,6 +743,8 @@ pub struct Transaction {
     strict: bool,
     max_retries: usize,
     invalid: Option<Error>,
+    /// What an engine served at the read version, for [`NamespaceTransaction::sync`].
+    served: Option<Arc<FxHashMap<String, Namespace>>>,
 }
 
 /// Index operations of a [`Transaction`] in one namespace.
@@ -794,6 +798,62 @@ impl NamespaceTransaction<'_> {
         let target = self.target(index);
         self.txn.ops.push(Op::Drop { target });
         self
+    }
+
+    /// Makes `ids`, or the whole of `index` when `ids` is `None`, read exactly as `documents`,
+    /// writing only what differs from what the engine served at the read version. Needs a
+    /// transaction from [`Replica::begin`]; in strict mode, a commit fails if another writer changed
+    /// `index` since.
+    pub fn sync(
+        &mut self,
+        index: &str,
+        documents: impl IntoIterator<Item = Document>,
+        ids: Option<&[u64]>,
+    ) -> Result<&mut Self, Error> {
+        let (upserts, deletes) = match self.served(index)? {
+            Some(served) => served.changes(documents, ids),
+            None => (documents.into_iter().collect(), Vec::new()),
+        };
+        if upserts.is_empty() && deletes.is_empty() {
+            return Ok(self);
+        }
+        self.append_documents(index, upserts, deletes)
+    }
+
+    /// Deletes every document of `index` not in `keep`, as the engine served it at the read version.
+    pub fn prune(&mut self, index: &str, keep: &[u64]) -> Result<&mut Self, Error> {
+        let keep: rustc_hash::FxHashSet<u64> = keep.iter().copied().collect();
+        let deletes: Vec<u64> = match self.served(index)? {
+            Some(served) => served.ids().filter(|id| !keep.contains(id)).collect(),
+            None => Vec::new(),
+        };
+        if deletes.is_empty() {
+            return Ok(self);
+        }
+        self.append_documents(index, [], deletes)
+    }
+
+    /// Hides `ids` from the layers before `index` with documents that have no text; deleting them
+    /// from `index` shows the earlier versions again.
+    pub fn hide(
+        &mut self,
+        index: &str,
+        ids: impl IntoIterator<Item = u64>,
+    ) -> Result<&mut Self, Error> {
+        self.append_documents(
+            index,
+            ids.into_iter().map(|id| Document::new(id, "", 0.0)),
+            [],
+        )
+    }
+
+    /// The served `index` of this namespace, `None` if it has none.
+    fn served(&self, index: &str) -> Result<Option<Arc<Index>>, Error> {
+        let served =
+            self.txn.served.as_ref().ok_or_else(|| {
+                Error::input("sync and prune need a transaction from Replica::begin")
+            })?;
+        Ok(served.get(&self.namespace).and_then(|n| n.get(index)))
     }
 
     /// Pins `index`'s score normalisation. New indexes otherwise estimate it from their first segment.
@@ -851,6 +911,33 @@ impl Transaction {
         self
     }
 
+    /// [`NamespaceTransaction::sync`] in the transaction's namespace.
+    pub fn sync(
+        &mut self,
+        index: &str,
+        documents: impl IntoIterator<Item = Document>,
+        ids: Option<&[u64]>,
+    ) -> Result<&mut Self, Error> {
+        self.here().sync(index, documents, ids)?;
+        Ok(self)
+    }
+
+    /// [`NamespaceTransaction::prune`] in the transaction's namespace.
+    pub fn prune(&mut self, index: &str, keep: &[u64]) -> Result<&mut Self, Error> {
+        self.here().prune(index, keep)?;
+        Ok(self)
+    }
+
+    /// [`NamespaceTransaction::hide`] in the transaction's namespace.
+    pub fn hide(
+        &mut self,
+        index: &str,
+        ids: impl IntoIterator<Item = u64>,
+    ) -> Result<&mut Self, Error> {
+        self.here().hide(index, ids)?;
+        Ok(self)
+    }
+
     pub fn set_max_score(&mut self, index: &str, max_score: f64) -> &mut Self {
         self.here().set_max_score(index, max_score);
         self
@@ -863,6 +950,12 @@ impl Transaction {
 }
 
 impl Transaction {
+    /// Whether the transaction holds no operation, as after a `sync` that found nothing to write;
+    /// committing it would still make a new version.
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
     pub fn read_version(&self) -> u64 {
         self.read.version
     }
@@ -1427,6 +1520,25 @@ impl Replica {
 
     pub async fn version(&self) -> u64 {
         self.state.lock().await.version
+    }
+
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
+
+    /// A transaction against the version this replica last published into `engine`, which
+    /// [`NamespaceTransaction::sync`] and [`NamespaceTransaction::prune`] compare with.
+    pub async fn begin(&self, engine: &Engine) -> Result<Transaction, Error> {
+        let state = self.state.lock().await;
+        let manifest = self.database.manifest(state.version).await?;
+        let served = engine
+            .namespaces()
+            .into_iter()
+            .filter_map(|name| Some((name.clone(), engine.namespace(&name).ok()?)))
+            .collect();
+        let mut txn = self.database.transaction(manifest);
+        txn.served = Some(Arc::new(served));
+        Ok(txn)
     }
 
     /// Syncs `engine` every `every` from a background thread, until the returned follower is dropped

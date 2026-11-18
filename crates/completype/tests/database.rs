@@ -445,3 +445,143 @@ async fn layered_results_do_not_change_on_compaction() {
         wipe(&ds).await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_fields_survive_compaction_and_leave_other_segments_as_they_were() {
+    let plain = Segment::build([Document::new(1, "Machine Learning", 0.5)], []).unwrap();
+    assert_eq!(
+        u64::from_le_bytes(plain.to_bytes()[8..16].try_into().unwrap()),
+        21
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "fields").await {
+        for (id, text) in [(1, "Machine Learning"), (2, "Machine Vision")] {
+            let doc = Document::new(id, text, 0.5).with_field("title_en", text);
+            let mut t = ds.begin().await.unwrap();
+            t.append_documents("a", [doc], []).unwrap();
+            t.commit().await.unwrap();
+        }
+        let full = CompactionPolicy::default().max_segments(1);
+        let compacted = ds
+            .compact("a", &full)
+            .await
+            .unwrap()
+            .expect("two segments are due");
+        let index = ds
+            .open_index(&compacted, "a", IndexOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(index.segments().len(), 1);
+        assert_eq!(
+            index.document(2).unwrap().fields["title_en"],
+            "Machine Vision"
+        );
+        wipe(&ds).await;
+    }
+}
+
+#[test]
+fn changes_write_only_what_differs_in_scope() {
+    let docs = [
+        Document::new(1, "Machine Learning", 0.5)
+            .with_synonym("ML")
+            .with_context("ai"),
+        Document::new(2, "Machine Vision", 0.4).with_field("owner", "default"),
+        Document::new(3, "Machine Translation", 0.3),
+    ];
+    let index = Index::from_documents(docs.clone()).unwrap();
+    assert_eq!(index.changes(docs.clone(), None), (vec![], vec![]));
+
+    let renamed = Document::new(2, "Computer Vision", 0.4).with_field("owner", "default");
+    let (upserts, deletes) = index.changes([renamed.clone()], Some(&[2, 3, 99]));
+    assert_eq!((upserts, deletes), (vec![renamed], vec![3]));
+    let (upserts, deletes) = index.changes([docs[0].clone()], None);
+    assert!(upserts.is_empty());
+    assert_eq!(
+        deletes
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [2, 3].into()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_transactions_sync_against_what_they_served_and_conflict_in_strict_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "sync").await {
+        let (engine, replica) = (
+            Engine::new(),
+            Replica::new(ds.clone(), IndexOptions::default()),
+        );
+        let mut t = ds.begin().await.unwrap();
+        t.append_documents("a", docs(0..10, "a"), []).unwrap();
+        t.append_documents("b", docs(0..10, "b"), []).unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+
+        // Unchanged documents write nothing; a changed one writes one segment.
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.sync("a", docs(0..10, "a"), None).unwrap();
+        assert!(t.is_empty());
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.sync("a", docs(0..9, "a"), Some(&[8, 9])).unwrap();
+        let written = t.commit().await.unwrap();
+        assert_eq!(written.namespaces["default"]["a"].segments.len(), 2);
+
+        // A writer that read before another changed the same index fails in strict mode.
+        let mut stale = replica.begin(&engine).await.unwrap();
+        stale.strict(true);
+        let mut elsewhere = replica.begin(&engine).await.unwrap();
+        elsewhere.strict(true);
+        replica.sync(&engine).await.unwrap();
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.hide("a", [3]).unwrap();
+        t.commit().await.unwrap();
+        stale.sync("a", docs(0..3, "a"), Some(&[0, 1, 2])).unwrap();
+        stale.append_documents("a", docs(20..21, "a"), []).unwrap();
+        assert!(matches!(stale.commit().await, Err(Error::Conflict(_))));
+        elsewhere
+            .append_documents("b", docs(20..21, "b"), [])
+            .unwrap();
+        elsewhere.commit().await.unwrap();
+
+        replica.sync(&engine).await.unwrap();
+        let ids = |name: &str| {
+            let mut ids: Vec<u64> = engine
+                .namespace("default")
+                .unwrap()
+                .get(name)
+                .unwrap()
+                .ids()
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.prune("b", &[0, 1, 20]).unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+        assert_eq!(ids("b"), [0, 1, 20]);
+        assert_eq!(ids("a"), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            engine
+                .namespace("default")
+                .unwrap()
+                .get("a")
+                .unwrap()
+                .document(3)
+                .unwrap()
+                .text,
+            ""
+        );
+
+        let mut plain = ds.begin().await.unwrap();
+        assert!(matches!(
+            plain.sync("a", [], None),
+            Err(Error::InvalidInput(_))
+        ));
+        wipe(&ds).await;
+    }
+}

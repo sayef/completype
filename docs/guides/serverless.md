@@ -136,6 +136,10 @@ durable.
 | `drop_index(index)` | Removes an index. |
 | `set_max_score(index, max_score)` | Pins the score that normalises to 1.0. |
 | `set_metadata(key, value)` | Sets or, with `None`, removes a string in the manifest. |
+| `sync(index, documents, ids=None)` | Makes `ids`, or the whole index, read exactly as `documents`, writing only what differs. Needs a transaction from `Engine.begin()`. |
+| `prune(index, keep)` | Deletes every document not in `keep`. Needs a transaction from `Engine.begin()`. |
+| `hide(index, ids)` | Hides ids from the [layers](layers.md) before `index`; deleting them shows the earlier versions again. |
+| `is_empty()` | Whether nothing is staged, as after a `sync` that found nothing to change. |
 | `strict(True)` | Fails with `ConflictError` instead of rebasing when an index it changes was changed since `read_version`. |
 | `max_retries(n)` | Retries of the create-only manifest write before giving up with `ConflictError` (32). |
 | `commit()` | Builds and uploads the segments, then commits; returns the new manifest as a dict. |
@@ -170,6 +174,51 @@ rate, use an inbox and an [ingestor](writers.md) instead.
 
 `db.versions()`, `db.latest_version()`, `db.index_names(version)` and `db.manifest(version)` read the
 history. `db.begin(version)` starts a transaction from an older version.
+
+### Keeping an index in step with a source of truth
+
+When documents come from somewhere else, such as a database, write what changed rather than everything.
+`engine.begin()` starts a transaction against the version an engine from `db.engine()` serves, and
+`sync` compares with what it serves: unchanged documents cost nothing, and an id the index does not hold
+costs no delete. Read the source after `begin()`, and commit in strict mode, so that a change another
+writer made in between makes the commit fail instead of being overwritten with older data.
+`engine.transact(function)` does all of that: it syncs, calls `function` with a strict transaction,
+commits, and does it all again while another writer got there first. It returns the new manifest, or
+`None` when nothing changed.
+
+```python
+import completype
+
+db = completype.connect("./synced-db")
+txn = db.begin()
+txn.append("songs", [
+    {"id": "bohemian", "text": "Bohemian Rhapsody – Queen", "popularity": 0.95},
+    {"id": "dancing", "text": "Dancing Queen – ABBA", "popularity": 0.85},
+    {"id": "killer", "text": "Killer Queen – Queen", "popularity": 0.6},
+])
+txn.commit()
+engine = db.engine(sync_every=None)
+engine.sync()
+
+# The catalogue as the source of truth has it now: one song renamed, one gone.
+catalogue = [
+    {"id": "bohemian", "text": "Bohemian Rhapsody (Remastered 2011) – Queen", "popularity": 0.95},
+    {"id": "dancing", "text": "Dancing Queen – ABBA", "popularity": 0.85},
+]
+manifest = engine.transact(lambda txn: txn.sync("songs", catalogue))
+print(manifest["version"], engine.transact(lambda txn: txn.sync("songs", catalogue)))
+engine.sync()
+print([s.text for s in engine.complete("queen", ["songs"])])
+```
+
+```text
+2 None
+['Bohemian Rhapsody (Remastered 2011) – Queen', 'Dancing Queen – ABBA']
+```
+
+With `ids`, `sync` covers only those documents, so a large source can be synced in batches; `prune(index,
+keep)` then removes what the source no longer has. In Rust, `Replica::begin(&engine)` starts such a
+transaction, and `Index::changes` returns what `sync` would write.
 
 ## Snapshots
 

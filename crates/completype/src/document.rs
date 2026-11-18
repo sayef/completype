@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 /// One completable entry: its id, display text, popularity, alternative names and contexts.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -15,6 +17,9 @@ pub struct Document {
     /// Embedding for vector search. Segments keep it only in quantised form, so documents read
     /// back from a segment carry `None`.
     pub vector: Option<Vec<f32>>,
+    /// Stored with the document and returned with it, never searched: what a caller needs to show
+    /// or route a result without a second lookup. Names and values may not contain NUL.
+    pub fields: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +53,7 @@ impl Document {
             aliases: Vec::new(),
             contexts: Vec::new(),
             vector: None,
+            fields: BTreeMap::new(),
         }
     }
 
@@ -80,6 +86,11 @@ impl Document {
 
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.contexts.push(context.into());
+        self
+    }
+
+    pub fn with_field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.insert(name.into(), value.into());
         self
     }
 }

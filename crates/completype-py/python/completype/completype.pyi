@@ -1,4 +1,4 @@
-from collections.abc import Buffer, Iterable, Mapping, Sequence
+from collections.abc import Buffer, Callable, Iterable, Mapping, Sequence
 from os import PathLike
 from types import TracebackType
 from typing import Any, Literal, Self, TypedDict
@@ -23,6 +23,7 @@ class DocumentDict(TypedDict, total=False):
     abbreviations: Sequence[str]
     contexts: Sequence[str]
     vector: Vector
+    fields: Mapping[str, str]
 
 Documents = Iterable[DocumentDict | Document] | Any
 """Dicts, `Document`s, or a pandas, polars or pyarrow table with those columns."""
@@ -57,6 +58,7 @@ class Document:
         abbreviations: Sequence[str] = ...,
         contexts: Sequence[str] = ...,
         vector: Vector | None = None,
+        fields: Mapping[str, str] = ...,
     ) -> None: ...
     @property
     def id(self) -> Id: ...
@@ -70,6 +72,9 @@ class Document:
     def abbreviations(self) -> list[str]: ...
     @property
     def contexts(self) -> list[str]: ...
+    @property
+    def fields(self) -> dict[str, str]:
+        """Stored with the document and returned with it, never searched."""
     def to_dict(self) -> DocumentDict: ...
 
 class Suggestion:
@@ -193,6 +198,8 @@ class Index:
         contexts: Sequence[str] | None = None,
     ) -> list[HybridSuggestion]: ...
     def get(self, id: Id) -> Document | None: ...
+    def ids(self) -> list[int]:
+        """The numeric ids of the live documents, sorted; a keyed document's is `key_id(key)`."""
     def compact(self, path: str | PathLike[str] | None = None, build_threads: int = 1) -> Segment: ...
     def segments(self) -> list[Segment]: ...
     @property
@@ -266,6 +273,14 @@ class Engine:
         """The background sync's last run: `synced_at` and `error`; `None` before it has run."""
     @property
     def version(self) -> int | None: ...
+    def begin(self) -> Transaction:
+        """
+        A transaction against the version this engine serves, in the default namespace; its `sync`
+        and `prune` compare with what the engine serves. Only for engines from `Database.engine()`."""
+    def transact(self, function: Callable[[Transaction], object], attempts: int = 10) -> dict[str, Any] | None:
+        """
+        Syncs, calls `function` with a strict transaction from `begin()` and commits it, again while
+        another writer changed an index it touches since; the new manifest, or None if nothing was staged."""
     def namespace(self, name: str) -> Namespace:
         """The current version of namespace `name`; `NamespaceNotFoundError` if there is none."""
     def namespaces(self) -> list[str]: ...
@@ -346,6 +361,14 @@ class NamespaceTransaction:
     def overwrite(self, index: str, documents: Documents, vectors: Vectors | None = None) -> None: ...
     def drop_index(self, index: str) -> None: ...
     def set_max_score(self, index: str, max_score: float) -> None: ...
+    def sync(self, index: str, documents: Documents, ids: Sequence[Id] | None = None) -> None:
+        """
+        Makes `ids`, or the whole of `index` when `ids` is None, read exactly as `documents`, writing
+        only what differs from what the engine served. Needs a transaction from `Engine.begin()`."""
+    def prune(self, index: str, keep: Sequence[Id]) -> None:
+        """Deletes every document of `index` not in `keep`. Needs a transaction from `Engine.begin()`."""
+    def hide(self, index: str, ids: Sequence[Id]) -> None:
+        """Hides `ids` from the layers before `index`; deleting them shows the earlier versions again."""
 
 class Transaction:
     """As a context manager, commits on success and discards its changes on an exception."""
@@ -359,6 +382,16 @@ class Transaction:
     def drop_index(self, index: str) -> None: ...
     def set_max_score(self, index: str, max_score: float) -> None: ...
     def set_metadata(self, key: str, value: str | None) -> None: ...
+    def sync(self, index: str, documents: Documents, ids: Sequence[Id] | None = None) -> None:
+        """
+        Makes `ids`, or the whole of `index` when `ids` is None, read exactly as `documents`, writing
+        only what differs from what the engine served. Needs a transaction from `Engine.begin()`."""
+    def prune(self, index: str, keep: Sequence[Id]) -> None:
+        """Deletes every document of `index` not in `keep`. Needs a transaction from `Engine.begin()`."""
+    def hide(self, index: str, ids: Sequence[Id]) -> None:
+        """Hides `ids` from the layers before `index`; deleting them shows the earlier versions again."""
+    def is_empty(self) -> bool:
+        """Whether nothing is staged; committing would still make a new version."""
     def strict(self, strict: bool = True) -> None: ...
     def max_retries(self, retries: int) -> None: ...
     def commit(self) -> dict[str, Any]: ...

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,6 +25,9 @@ pub(crate) use words::{WordCursor, Words};
 
 const MAGIC: &[u8; 8] = b"CMPLTYPE";
 const VERSION: u64 = 21;
+/// A segment with stored fields; without any it is still written as `VERSION`, readable by older
+/// releases.
+const FIELDS_VERSION: u64 = 22;
 const DOCS_PER_BLOCK: usize = 128;
 const ZSTD_LEVEL: i32 = 3;
 
@@ -1019,6 +1023,8 @@ pub struct Segment {
     texts: FsstColumn,
     /// Empty for documents without a key.
     keys: KeyColumn,
+    /// Each document's stored fields as `name\0value\0…`, when any document has fields.
+    fields: Option<FsstColumn>,
     /// Context tag to locals.
     pub(crate) contexts: Keyed,
 }
@@ -1133,9 +1139,11 @@ impl Segment {
             }
         };
         let layout = config.effective_layout();
+        let has_fields = docs.iter().any(|d| d.fields.is_some());
         write_header(
             &mut sink,
             config,
+            if has_fields { FIELDS_VERSION } else { VERSION },
             n,
             |i| docs.get(i).id,
             |i| docs.get(i).popularity,
@@ -1156,7 +1164,7 @@ impl Segment {
         // once those are written, before the variants.
         let title_weights: Vec<f32> = (0..docs.len()).map(|i| docs.get(i).popularity).collect();
         let docs = Arc::new(docs);
-        let (stored, vectored) = (docs.clone(), docs.clone());
+        let (stored, vectored, fielded) = (docs.clone(), docs.clone(), docs.clone());
         let sections: Vec<Section> = vec![
             Box::new(move |w| DocStore::write(w, &stored)),
             Box::new(move |w| {
@@ -1179,7 +1187,15 @@ impl Segment {
                         (None, None) => {}
                     }
                 }
-                Vectors::write(w, dim, config.vector_bits, &rows)
+                Vectors::write(w, dim, config.vector_bits, &rows)?;
+                if has_fields {
+                    FsstColumn::write(w, fielded.len(), |i, out| {
+                        if let Some(fields) = fielded.get(i).fields {
+                            encode_fields(out, fields)
+                        }
+                    })?;
+                }
+                Ok(())
             }),
             Box::new(move |w| {
                 let order = Titles::order_of(title_keys)?;
@@ -1289,7 +1305,18 @@ impl Segment {
             aliases,
             contexts,
             vector: None,
+            fields: self.fields_of(local),
         }
+    }
+
+    /// The stored fields of `local`.
+    pub(crate) fn fields_of(&self, local: usize) -> BTreeMap<String, String> {
+        let Some(column) = &self.fields else {
+            return BTreeMap::new();
+        };
+        let mut raw = Vec::new();
+        column.append(local, &mut raw);
+        decode_fields(&raw)
     }
 
     /// The original text of `local`.
@@ -1415,7 +1442,7 @@ impl Segment {
             return Err(Error::Corrupt("not a completype segment".into()));
         }
         let version = r.u64()?;
-        if version != VERSION {
+        if version != VERSION && version != FIELDS_VERSION {
             return Err(Error::Corrupt(format!(
                 "unsupported segment version {version}"
             )));
@@ -1446,6 +1473,9 @@ impl Segment {
         let texts = FsstColumn::read(&mut r, n, full)?;
         let keys = KeyColumn::read(&mut r, n, full)?;
         let vectors = Vectors::read(&mut r, n, full)?;
+        let fields = (version == FIELDS_VERSION)
+            .then(|| FsstColumn::read(&mut r, n, full))
+            .transpose()?;
         let titles = Titles::read(&mut r, n)?;
         let aliases = Keyed::read(&mut r, layout.aliases, local_bound.saturating_mul(2), full)?;
         let contexts = Keyed::read(&mut r, Dictionary::Fst, local_bound, full)?;
@@ -1470,6 +1500,7 @@ impl Segment {
             vectors,
             texts,
             keys,
+            fields,
             contexts,
         };
         let valid = segment.shapes.len == n
@@ -1860,9 +1891,11 @@ type Section<'s> = Box<dyn FnOnce(&mut Writer) -> Result<(), Error> + Send + 's>
 
 /// The header and the per-document columns.
 /// `shape(local)` is a document's text length in chars and whether it is a single word.
+#[allow(clippy::too_many_arguments)]
 fn write_header(
     sink: &mut Sink,
     config: BuildOptions,
+    version: u64,
     n: usize,
     id: impl Fn(usize) -> u64,
     weight: impl Fn(usize) -> f32 + Sync,
@@ -1872,7 +1905,7 @@ fn write_header(
     let layout = config.effective_layout();
     let mut w = Writer::spilling(sink);
     w.raw(MAGIC);
-    w.u64(VERSION);
+    w.u64(version);
     w.raw(&[
         config.min_word_chars,
         config.max_edit_distance,
@@ -1975,6 +2008,27 @@ impl KeyArena {
         }
         groups
     }
+}
+
+/// Appends `fields` as `name\0value\0…`.
+pub(crate) fn encode_fields(out: &mut Vec<u8>, fields: &BTreeMap<String, String>) {
+    for (name, value) in fields {
+        out.extend_from_slice(name.as_bytes());
+        out.push(0);
+        out.extend_from_slice(value.as_bytes());
+        out.push(0);
+    }
+}
+
+fn decode_fields(raw: &[u8]) -> BTreeMap<String, String> {
+    let mut parts = raw
+        .split(|&b| b == 0)
+        .map(|p| String::from_utf8_lossy(p).into_owned());
+    let mut fields = BTreeMap::new();
+    while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+        fields.insert(name, value);
+    }
+    fields
 }
 
 #[cfg(test)]

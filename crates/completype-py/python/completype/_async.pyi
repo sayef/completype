@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from os import PathLike
 from typing import Any
 
@@ -54,6 +54,8 @@ class AsyncClientNamespace:
 
 class AsyncEngine:
     async def sync(self) -> int | None: ...
+    async def begin(self) -> Transaction: ...
+    async def transact(self, function: Callable[[Transaction], object], attempts: int = 10) -> dict[str, Any] | None: ...
     def __getattr__(self, name: str) -> Any: ...
 
 class AsyncDatabase:

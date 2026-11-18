@@ -434,6 +434,46 @@ impl Index {
         })
     }
 
+    /// The ids of the live documents.
+    pub fn ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.segments.iter().enumerate().flat_map(move |(i, seg)| {
+            let base = self.offsets[i] as usize;
+            (0..seg.len())
+                .filter(move |&l| !self.hidden[base + l])
+                .map(move |l| seg.id(l))
+        })
+    }
+
+    /// What to write on top of this index so that `ids`, or the whole index when `ids` is `None`,
+    /// reads exactly as `documents`: the documents that differ from the live ones, and the ids of
+    /// the live documents in scope that `documents` leaves out. An id the index does not hold
+    /// costs no delete. A document with a vector always counts as changed, as segments keep
+    /// vectors only quantised.
+    pub fn changes(
+        &self,
+        documents: impl IntoIterator<Item = Document>,
+        ids: Option<&[u64]>,
+    ) -> (Vec<Document>, Vec<u64>) {
+        let mut wanted: FxHashMap<u64, Document> = FxHashMap::default();
+        for doc in documents {
+            wanted.insert(doc.id, doc);
+        }
+        let in_scope: Vec<u64> = match ids {
+            Some(ids) => ids.iter().copied().filter(|&id| self.holds(id)).collect(),
+            None => self.ids().collect(),
+        };
+        let deletes = in_scope
+            .into_iter()
+            .filter(|id| !wanted.contains_key(id))
+            .collect();
+        let mut upserts: Vec<Document> = wanted
+            .into_values()
+            .filter(|doc| !self.document(doc.id).is_some_and(|live| same(&live, doc)))
+            .collect();
+        upserts.sort_by_key(|d| d.id);
+        (upserts, deletes)
+    }
+
     /// Merges the live documents into one segment without deletes.
     pub fn compact(&self) -> Result<Segment, Error> {
         self.merged_segment(Vec::new(), None, 1)
@@ -1039,4 +1079,29 @@ fn hide_superseded(
         }
     }
     Ok(hidden_docs)
+}
+
+/// Whether `wanted` would read back as `live`, which a segment stored, does.
+fn same(live: &Document, wanted: &Document) -> bool {
+    fn sorted<T: Ord + Clone>(items: &[T]) -> Vec<T> {
+        let mut items = items.to_vec();
+        items.sort();
+        items.dedup();
+        items
+    }
+    let aliases = |d: &Document| {
+        sorted(
+            &d.aliases
+                .iter()
+                .map(|a| (a.text.clone(), a.kind as u8))
+                .collect::<Vec<_>>(),
+        )
+    };
+    wanted.vector.is_none()
+        && live.text == wanted.text
+        && live.key == wanted.key
+        && live.popularity.to_bits() == wanted.popularity.to_bits()
+        && live.fields == wanted.fields
+        && sorted(&live.contexts) == sorted(&wanted.contexts)
+        && aliases(live) == aliases(wanted)
 }

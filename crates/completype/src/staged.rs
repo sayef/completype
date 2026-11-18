@@ -1,6 +1,7 @@
 //! Documents collected for one segment build: texts in one arena, a fixed-size entry per document.
 
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 
 use crate::{Alias, Document, Error};
 
@@ -9,6 +10,7 @@ struct Extra {
     aliases: Vec<Alias>,
     contexts: Vec<String>,
     vector: Option<Vec<f32>>,
+    fields: BTreeMap<String, String>,
 }
 
 /// A document's text, then its key, in the arena.
@@ -30,6 +32,7 @@ pub(crate) struct DocRef<'a> {
     pub(crate) aliases: &'a [Alias],
     pub(crate) contexts: &'a [String],
     pub(crate) vector: Option<&'a [f32]>,
+    pub(crate) fields: Option<&'a BTreeMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -46,15 +49,33 @@ pub(crate) struct Staged {
 
 impl Staged {
     pub(crate) fn add(&mut self, doc: Document) -> Result<(), Error> {
-        let plain = doc.aliases.is_empty() && doc.contexts.is_empty() && doc.vector.is_none();
+        if doc
+            .fields
+            .iter()
+            .any(|(n, v)| n.contains('\0') || v.contains('\0'))
+        {
+            return Err(Error::input(
+                "stored field names and values may not contain NUL",
+            ));
+        }
+        let plain = doc.aliases.is_empty()
+            && doc.contexts.is_empty()
+            && doc.vector.is_none()
+            && doc.fields.is_empty();
         let extra_bytes = doc.aliases.iter().map(|a| a.text.len() + 8).sum::<usize>()
-            + doc.contexts.iter().map(|c| c.len() + 8).sum::<usize>();
+            + doc.contexts.iter().map(|c| c.len() + 8).sum::<usize>()
+            + doc
+                .fields
+                .iter()
+                .map(|(n, v)| n.len() + v.len() + 2)
+                .sum::<usize>();
         self.vector_floats += doc.vector.as_ref().map_or(0, Vec::len);
         let extra = (!plain).then(|| {
             Box::new(Extra {
                 aliases: doc.aliases,
                 contexts: doc.contexts,
                 vector: doc.vector,
+                fields: doc.fields,
             })
         });
         self.extra_bytes += extra_bytes;
@@ -174,6 +195,7 @@ impl Staged {
             aliases: extra.map_or(&[], |x| &x.aliases),
             contexts: extra.map_or(&[], |x| &x.contexts),
             vector: extra.and_then(|x| x.vector.as_deref()),
+            fields: extra.map(|x| &x.fields).filter(|f| !f.is_empty()),
         }
     }
 
