@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/sayef/completype/compare/v0.2.1...v0.2.2) - 2026-11-19
+
 ### Fixed
 
 - `Engine.begin()` (`Replica::begin`) transactions are strict, so a commit fails instead of rebasing
