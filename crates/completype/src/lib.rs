@@ -123,7 +123,15 @@ pub enum Error {
     Store(object_store::Error),
 }
 
+/// In the message of a conflict a retry against a newer version can resolve.
+pub(crate) const CHANGED_SINCE: &str = "changed since version";
+
 impl Error {
+    /// Whether a strict commit failed because an index it touches changed since its read version.
+    pub fn is_stale(&self) -> bool {
+        matches!(self, Self::Conflict(m) if m.contains(CHANGED_SINCE))
+    }
+
     pub(crate) fn input(message: impl Into<String>) -> Self {
         Self::InvalidInput(message.into())
     }

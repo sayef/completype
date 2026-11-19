@@ -436,19 +436,27 @@ impl Index {
 
     /// The ids of the live documents.
     pub fn ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.live().map(|(seg, l)| seg.id(l))
+    }
+
+    /// The ids of the live documents without text, which hide their ids in earlier layers.
+    pub fn hidden_ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.live()
+            .filter(|(seg, l)| seg.text_len(*l) == 0)
+            .map(|(seg, l)| seg.id(l))
+    }
+
+    fn live(&self) -> impl Iterator<Item = (&Segment, usize)> + '_ {
         self.segments.iter().enumerate().flat_map(move |(i, seg)| {
             let base = self.offsets[i] as usize;
             (0..seg.len())
                 .filter(move |&l| !self.hidden[base + l])
-                .map(move |l| seg.id(l))
+                .map(move |l| (&**seg, l))
         })
     }
 
-    /// What to write on top of this index so that `ids`, or the whole index when `ids` is `None`,
-    /// reads exactly as `documents`: the documents that differ from the live ones, and the ids of
-    /// the live documents in scope that `documents` leaves out. An id the index does not hold
-    /// costs no delete. A document with a vector always counts as changed, as segments keep
-    /// vectors only quantised.
+    /// The upserts and deletes that make `ids`, or the whole index without its hide markers, read
+    /// as `documents`; an id the index does not hold costs no delete.
     pub fn changes(
         &self,
         documents: impl IntoIterator<Item = Document>,
@@ -460,7 +468,10 @@ impl Index {
         }
         let in_scope: Vec<u64> = match ids {
             Some(ids) => ids.iter().copied().filter(|&id| self.holds(id)).collect(),
-            None => self.ids().collect(),
+            None => {
+                let markers: FxHashSet<u64> = self.hidden_ids().collect();
+                self.ids().filter(|id| !markers.contains(id)).collect()
+            }
         };
         let deletes = in_scope
             .into_iter()
@@ -468,10 +479,27 @@ impl Index {
             .collect();
         let mut upserts: Vec<Document> = wanted
             .into_values()
-            .filter(|doc| !self.document(doc.id).is_some_and(|live| same(&live, doc)))
+            .filter(|doc| {
+                !self
+                    .document(doc.id)
+                    .is_some_and(|live| same(&live, doc) && !self.has_vector(doc.id))
+            })
             .collect();
         upserts.sort_by_key(|d| d.id);
         (upserts, deletes)
+    }
+
+    /// Whether the live document `id` has a stored vector.
+    fn has_vector(&self, id: u64) -> bool {
+        self.segments.iter().enumerate().rev().any(|(i, seg)| {
+            seg.local_of(id).is_some_and(|l| {
+                !self.hidden[self.offsets[i] as usize + l]
+                    && seg
+                        .vectors
+                        .as_ref()
+                        .is_some_and(|v| v.row(l as u32).is_some())
+            })
+        })
     }
 
     /// Merges the live documents into one segment without deletes.

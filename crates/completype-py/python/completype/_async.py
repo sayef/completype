@@ -2,6 +2,7 @@
 stay synchronous (sub-millisecond). Constructors do not block: storage opens on the first awaited call."""
 
 import asyncio
+import inspect
 
 from .completype import Client, ClientNamespace, Collection, Database, DatabaseNamespace, Engine
 
@@ -51,7 +52,9 @@ class AsyncEngine:
         return await asyncio.to_thread(self._engine.begin)
 
     async def transact(self, function, attempts=10):
-        """As `Engine.transact`; `function` runs in a worker thread."""
+        """As `Engine.transact`; `function` is synchronous and runs in a worker thread."""
+        if inspect.iscoroutinefunction(function):
+            raise TypeError("transact needs a synchronous function; async ones would stage nothing")
         return await asyncio.to_thread(self._engine.transact, function, attempts)
 
     def __getattr__(self, name):

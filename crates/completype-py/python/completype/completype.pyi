@@ -274,13 +274,9 @@ class Engine:
     @property
     def version(self) -> int | None: ...
     def begin(self) -> Transaction:
-        """
-        A transaction against the version this engine serves, in the default namespace; its `sync`
-        and `prune` compare with what the engine serves. Only for engines from `Database.engine()`."""
+        """A strict transaction against the version this engine serves; `sync` and `prune` compare with it."""
     def transact(self, function: Callable[[Transaction], object], attempts: int = 10) -> dict[str, Any] | None:
-        """
-        Syncs, calls `function` with a strict transaction from `begin()` and commits it, again while
-        another writer changed an index it touches since; the new manifest, or None if nothing was staged."""
+        """Syncs, runs `function` with `begin()`'s transaction and commits, again on a stale index; None if nothing staged."""
     def namespace(self, name: str) -> Namespace:
         """The current version of namespace `name`; `NamespaceNotFoundError` if there is none."""
     def namespaces(self) -> list[str]: ...
@@ -362,11 +358,9 @@ class NamespaceTransaction:
     def drop_index(self, index: str) -> None: ...
     def set_max_score(self, index: str, max_score: float) -> None: ...
     def sync(self, index: str, documents: Documents, ids: Sequence[Id] | None = None) -> None:
-        """
-        Makes `ids`, or the whole of `index` when `ids` is None, read exactly as `documents`, writing
-        only what differs from what the engine served. Needs a transaction from `Engine.begin()`."""
+        """Makes `ids`, or all of `index` but its hide markers, read as `documents`; needs `Engine.begin()`."""
     def prune(self, index: str, keep: Sequence[Id]) -> None:
-        """Deletes every document of `index` not in `keep`. Needs a transaction from `Engine.begin()`."""
+        """Deletes every document of `index` not in `keep`, except hide markers; needs `Engine.begin()`."""
     def hide(self, index: str, ids: Sequence[Id]) -> None:
         """Hides `ids` from the layers before `index`; deleting them shows the earlier versions again."""
 
@@ -383,11 +377,9 @@ class Transaction:
     def set_max_score(self, index: str, max_score: float) -> None: ...
     def set_metadata(self, key: str, value: str | None) -> None: ...
     def sync(self, index: str, documents: Documents, ids: Sequence[Id] | None = None) -> None:
-        """
-        Makes `ids`, or the whole of `index` when `ids` is None, read exactly as `documents`, writing
-        only what differs from what the engine served. Needs a transaction from `Engine.begin()`."""
+        """Makes `ids`, or all of `index` but its hide markers, read as `documents`; needs `Engine.begin()`."""
     def prune(self, index: str, keep: Sequence[Id]) -> None:
-        """Deletes every document of `index` not in `keep`. Needs a transaction from `Engine.begin()`."""
+        """Deletes every document of `index` not in `keep`, except hide markers; needs `Engine.begin()`."""
     def hide(self, index: str, ids: Sequence[Id]) -> None:
         """Hides `ids` from the layers before `index`; deleting them shows the earlier versions again."""
     def is_empty(self) -> bool:

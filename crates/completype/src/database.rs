@@ -800,10 +800,8 @@ impl NamespaceTransaction<'_> {
         self
     }
 
-    /// Makes `ids`, or the whole of `index` when `ids` is `None`, read exactly as `documents`,
-    /// writing only what differs from what the engine served at the read version. Needs a
-    /// transaction from [`Replica::begin`]; in strict mode, a commit fails if another writer changed
-    /// `index` since.
+    /// Makes `ids`, or all of `index` but its hide markers, read as `documents`, writing only what
+    /// differs from what the engine served; needs a transaction from [`Replica::begin`].
     pub fn sync(
         &mut self,
         index: &str,
@@ -820,11 +818,14 @@ impl NamespaceTransaction<'_> {
         self.append_documents(index, upserts, deletes)
     }
 
-    /// Deletes every document of `index` not in `keep`, as the engine served it at the read version.
+    /// Deletes every served document of `index` not in `keep`, except hide markers.
     pub fn prune(&mut self, index: &str, keep: &[u64]) -> Result<&mut Self, Error> {
-        let keep: rustc_hash::FxHashSet<u64> = keep.iter().copied().collect();
+        let mut keep: rustc_hash::FxHashSet<u64> = keep.iter().copied().collect();
         let deletes: Vec<u64> = match self.served(index)? {
-            Some(served) => served.ids().filter(|id| !keep.contains(id)).collect(),
+            Some(served) => {
+                keep.extend(served.hidden_ids());
+                served.ids().filter(|id| !keep.contains(id)).collect()
+            }
             None => Vec::new(),
         };
         if deletes.is_empty() {
@@ -833,8 +834,7 @@ impl NamespaceTransaction<'_> {
         self.append_documents(index, [], deletes)
     }
 
-    /// Hides `ids` from the layers before `index` with documents that have no text; deleting them
-    /// from `index` shows the earlier versions again.
+    /// Hides `ids` from earlier layers with documents without text; deleting them unhides.
     pub fn hide(
         &mut self,
         index: &str,
@@ -849,10 +849,11 @@ impl NamespaceTransaction<'_> {
 
     /// The served `index` of this namespace, `None` if it has none.
     fn served(&self, index: &str) -> Result<Option<Arc<Index>>, Error> {
-        let served =
-            self.txn.served.as_ref().ok_or_else(|| {
-                Error::input("sync and prune need a transaction from Replica::begin")
-            })?;
+        let served = self.txn.served.as_ref().ok_or_else(|| {
+            Error::input(
+                "sync and prune need a transaction from Engine.begin() (Replica::begin in Rust)",
+            )
+        })?;
         Ok(served.get(&self.namespace).and_then(|n| n.get(index)))
     }
 
@@ -950,8 +951,7 @@ impl Transaction {
 }
 
 impl Transaction {
-    /// Whether the transaction holds no operation, as after a `sync` that found nothing to write;
-    /// committing it would still make a new version.
+    /// Whether nothing is staged; committing would still make a new version.
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
@@ -1215,7 +1215,8 @@ impl Transaction {
                 }
                 _ if changed && (self.strict || matches!(op, Op::Overwrite { .. })) => {
                     return Err(Error::Conflict(format!(
-                        "{index} changed since version {}",
+                        "{index} {} {}",
+                        crate::CHANGED_SINCE,
                         self.read.version
                     )));
                 }
@@ -1526,10 +1527,15 @@ impl Replica {
         &self.database
     }
 
-    /// A transaction against the version this replica last published into `engine`, which
-    /// [`NamespaceTransaction::sync`] and [`NamespaceTransaction::prune`] compare with.
+    /// A strict transaction against the version this replica last published into `engine`, which
+    /// `sync` and `prune` compare with.
     pub async fn begin(&self, engine: &Engine) -> Result<Transaction, Error> {
         let state = self.state.lock().await;
+        if state.version == 0 && self.database.latest_version().await? > 0 {
+            return Err(Error::input(
+                "sync the engine before beginning a transaction on it",
+            ));
+        }
         let manifest = self.database.manifest(state.version).await?;
         let served = engine
             .namespaces()
@@ -1538,6 +1544,7 @@ impl Replica {
             .collect();
         let mut txn = self.database.transaction(manifest);
         txn.served = Some(Arc::new(served));
+        txn.strict = true;
         Ok(txn)
     }
 

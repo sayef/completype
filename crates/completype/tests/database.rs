@@ -585,3 +585,103 @@ async fn engine_transactions_sync_against_what_they_served_and_conflict_in_stric
         wipe(&ds).await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_transactions_are_strict_and_need_a_synced_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "strict").await {
+        let (engine, replica) = (
+            Engine::new(),
+            Replica::new(ds.clone(), IndexOptions::default()),
+        );
+        let mut t = ds.begin().await.unwrap();
+        t.append_documents("a", docs(0..5, "a"), []).unwrap();
+        t.commit().await.unwrap();
+        assert!(matches!(
+            replica.begin(&engine).await,
+            Err(Error::InvalidInput(_))
+        ));
+        replica.sync(&engine).await.unwrap();
+
+        let mut stale = replica.begin(&engine).await.unwrap();
+        let mut t = ds.begin().await.unwrap();
+        t.append_documents("a", docs(5..6, "a"), []).unwrap();
+        t.commit().await.unwrap();
+        stale
+            .sync("a", docs(0..4, "b"), Some(&[0, 1, 2, 3]))
+            .unwrap();
+        let error = stale.commit().await.unwrap_err();
+        assert!(error.is_stale(), "{error}");
+        wipe(&ds).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_and_prune_keep_hide_markers_and_drop_stale_vectors() {
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "markers").await {
+        let (engine, replica) = (
+            Engine::new(),
+            Replica::new(ds.clone(), IndexOptions::default()),
+        );
+        let mut t = ds.begin().await.unwrap();
+        let embedded = Document::new(9, "Embedded", 0.5)
+            .with_vector(vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        t.append_documents("a", docs(0..3, "a").into_iter().chain([embedded]), [])
+            .unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.hide("a", [7]).unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+
+        // The whole layer, without the marker or the vector: the marker stays, the vector goes.
+        let mut t = replica.begin(&engine).await.unwrap();
+        let plain = Document::new(9, "Embedded", 0.5);
+        t.sync("a", docs(0..3, "a").into_iter().chain([plain]), None)
+            .unwrap();
+        t.prune("a", &[0, 1, 2, 9]).unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+        let a = engine.namespace("default").unwrap().get("a").unwrap();
+        assert_eq!(a.hidden_ids().collect::<Vec<_>>(), [7]);
+        assert_eq!(
+            a.changes([Document::new(9, "Embedded", 0.5)], Some(&[9])),
+            (vec![], vec![])
+        );
+
+        // Naming a hidden id unhides it.
+        let mut t = replica.begin(&engine).await.unwrap();
+        t.sync("a", [], Some(&[7])).unwrap();
+        t.commit().await.unwrap();
+        replica.sync(&engine).await.unwrap();
+        let a = engine.namespace("default").unwrap().get("a").unwrap();
+        assert_eq!(a.hidden_ids().count(), 0);
+        wipe(&ds).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compaction_writes_the_old_format_once_no_fields_remain() {
+    let dir = tempfile::tempdir().unwrap();
+    for ds in databases(&dir, "old-format").await {
+        for doc in [
+            Document::new(1, "Machine Learning", 0.5).with_field("title_en", "ML"),
+            Document::new(1, "Machine Learning", 0.5),
+        ] {
+            let mut t = ds.begin().await.unwrap();
+            t.append_documents("a", [doc], []).unwrap();
+            t.commit().await.unwrap();
+        }
+        let full = CompactionPolicy::default().max_segments(1);
+        let compacted = ds.compact("a", &full).await.unwrap().unwrap();
+        let index = ds
+            .open_index(&compacted, "a", IndexOptions::default())
+            .await
+            .unwrap();
+        let bytes = index.segments()[0].to_bytes();
+        assert_eq!(u64::from_le_bytes(bytes[8..16].try_into().unwrap()), 21);
+        wipe(&ds).await;
+    }
+}

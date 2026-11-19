@@ -17,8 +17,7 @@ pub struct Document {
     /// Embedding for vector search. Segments keep it only in quantised form, so documents read
     /// back from a segment carry `None`.
     pub vector: Option<Vec<f32>>,
-    /// Stored with the document and returned with it, never searched: what a caller needs to show
-    /// or route a result without a second lookup. Names and values may not contain NUL.
+    /// Stored and returned with the document, never searched; names and values may not hold NUL.
     pub fields: BTreeMap<String, String>,
 }
 

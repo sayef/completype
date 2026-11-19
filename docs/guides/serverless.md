@@ -178,13 +178,13 @@ history. `db.begin(version)` starts a transaction from an older version.
 ### Keeping an index in step with a source of truth
 
 When documents come from somewhere else, such as a database, write what changed rather than everything.
-`engine.begin()` starts a transaction against the version an engine from `db.engine()` serves, and
-`sync` compares with what it serves: unchanged documents cost nothing, and an id the index does not hold
-costs no delete. Read the source after `begin()`, and commit in strict mode, so that a change another
-writer made in between makes the commit fail instead of being overwritten with older data.
-`engine.transact(function)` does all of that: it syncs, calls `function` with a strict transaction,
-commits, and does it all again while another writer got there first. It returns the new manifest, or
-`None` when nothing changed.
+`engine.begin()` starts a strict transaction against the version an engine from `db.engine()` serves,
+and `sync` compares with what it serves: unchanged documents cost nothing, and an id the index does not
+hold costs no delete. Read the source after `begin()`: a change another writer made in between then
+makes the commit fail with `ConflictError` instead of being overwritten with older data.
+`engine.transact(function)` does all of that: it syncs, calls `function` with such a transaction,
+commits, and does it all again while another writer changed an index it touches. It returns the new
+manifest, or `None` when nothing changed. `function` must be synchronous, also under `AsyncEngine`.
 
 ```python
 import completype
@@ -217,8 +217,11 @@ print([s.text for s in engine.complete("queen", ["songs"])])
 ```
 
 With `ids`, `sync` covers only those documents, so a large source can be synced in batches; `prune(index,
-keep)` then removes what the source no longer has. In Rust, `Replica::begin(&engine)` starts such a
-transaction, and `Index::changes` returns what `sync` would write.
+keep)` then removes what the source no longer has. Without `ids`, `sync` and `prune` leave the layer's
+[hide markers](layers.md) alone; pass a hidden id in `ids` to unhide it. A document whose stored vector
+the source dropped is rewritten without it. In Rust, `Replica::begin(&engine)` starts such a
+transaction, `Index::changes` returns what `sync` would write, and `Error::is_stale` tells a conflict
+a retry can resolve.
 
 ## Snapshots
 
