@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `Engine.begin()` (`Replica::begin`) transactions are strict, so a commit fails instead of rebasing
+  over a write it did not see, and `begin` on an engine that never synced a non-empty database fails
+  instead of comparing with nothing.
+- `sync` without `ids` and `prune` keep a layer's hide markers; passing a hidden id in `ids` still
+  unhides it. `sync` rewrites a document whose stored vector the source no longer has.
+- `fields` from pyarrow, polars and pandas tables are accepted: maps as `(name, value)` pairs, `None`
+  values left out, and `None` or NaN as no fields.
+- `Engine.transact` retries only conflicts a newer version can resolve (`Error::is_stale`), and
+  `AsyncEngine.transact` refuses an `async` function instead of silently staging nothing.
+- Compaction writes the stored-fields segment format only when a remaining document has fields, so
+  older releases keep reading the rest.
+
 ## [0.2.1](https://github.com/sayef/completype/compare/v0.2.0...v0.2.1) - 2026-11-18
 
 ### Added

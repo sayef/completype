@@ -236,11 +236,32 @@ fn document_from_dict(
         doc = doc.with_vector(query_vector(py, &v)?);
     }
     if let Some(v) = get("fields") {
-        doc.fields = v
-            .extract()
-            .map_err(|_| invalid("fields must be a dict of strings to strings"))?;
+        doc.fields = fields_from(&v)?;
     }
     Ok(doc)
+}
+
+/// Stored fields from a mapping, or the `(name, value)` pairs a pyarrow map gives; `None` and NaN
+/// mean none, and a `None` value leaves its name out, as polars structs carry every name.
+fn fields_from(value: &Bound<'_, PyAny>) -> PyResult<BTreeMap<String, String>> {
+    if value.is_none() || value.extract::<f64>().is_ok_and(f64::is_nan) {
+        return Ok(BTreeMap::new());
+    }
+    let pairs = if let Ok(mapping) = value.cast::<PyDict>() {
+        mapping.items().into_any()
+    } else {
+        value.clone()
+    };
+    let mut fields = BTreeMap::new();
+    for pair in pairs.try_iter()? {
+        let (name, field): (String, Option<String>) = pair?
+            .extract()
+            .map_err(|_| invalid("fields must map strings to strings"))?;
+        if let Some(field) = field {
+            fields.insert(name, field);
+        }
+    }
+    Ok(fields)
 }
 
 /// Documents from dicts, `Document`s, or a pandas, polars or pyarrow table.
@@ -1339,8 +1360,8 @@ impl Engine {
             .map_err(to_py_err)
     }
 
-    /// A transaction against the version this engine serves, in the default namespace; its `sync`
-    /// and `prune` compare with what the engine serves.
+    /// A strict transaction against the version this engine serves; `sync` and `prune` compare
+    /// with it.
     fn begin(&self, py: Python<'_>) -> PyResult<Transaction> {
         let replica = self.replica()?;
         let txn = py
@@ -1353,9 +1374,8 @@ impl Engine {
         })
     }
 
-    /// Syncs, then calls `function` with a strict transaction from `begin()` and commits it; when
-    /// another writer changed an index it touches since, does it all again, up to `attempts` times.
-    /// Returns the new manifest, or None if `function` staged nothing.
+    /// Syncs, runs `function` with a transaction from `begin()` and commits, again while another
+    /// writer changed an index it touches; the new manifest, or None if nothing was staged.
     #[pyo3(signature = (function, attempts = 10))]
     fn transact<'py>(
         &self,
@@ -1366,10 +1386,6 @@ impl Engine {
         for attempt in 1..=attempts.max(1) {
             self.sync(py)?;
             let txn = Bound::new(py, self.begin(py)?)?;
-            txn.get().with(|t| {
-                t.strict(true);
-                Ok(())
-            })?;
             function.call1((txn.clone(),))?;
             let staged = txn
                 .get()
@@ -1383,7 +1399,7 @@ impl Engine {
             }
             match py.detach(|| completype_rs::block_on(staged.commit())) {
                 Ok(manifest) => return manifest_dict(py, &manifest).map(Some),
-                Err(completype_rs::Error::Conflict(_)) if attempt < attempts => continue,
+                Err(e) if e.is_stale() && attempt < attempts => continue,
                 Err(e) => return Err(to_py_err(e)),
             }
         }
@@ -2236,15 +2252,13 @@ impl Transaction {
         self.with(|t| Ok(t.read_version()))
     }
 
-    /// Whether nothing is staged, as after a `sync` that found nothing to write; committing would
-    /// still make a new version.
+    /// Whether nothing is staged; committing would still make a new version.
     fn is_empty(&self) -> PyResult<bool> {
         self.with(|t| Ok(t.is_empty()))
     }
 
-    /// Makes `ids` (ids or keys), or the whole of `index` when `ids` is None, read exactly as
-    /// `documents`, writing only what differs from what the engine served. Needs a transaction from
-    /// `Engine.begin()`.
+    /// Makes `ids`, or all of `index` but its hide markers, read as `documents`, writing only what
+    /// differs; needs a transaction from `Engine.begin()`.
     #[pyo3(signature = (index, documents, ids = None))]
     fn sync(
         &self,
@@ -2256,8 +2270,7 @@ impl Transaction {
         self.sync_in(py, &self.namespace, index, documents, ids)
     }
 
-    /// Deletes every document of `index` not in `keep`, as the engine served it. Needs a
-    /// transaction from `Engine.begin()`.
+    /// Deletes every document of `index` not in `keep`, except hide markers; needs `Engine.begin()`.
     fn prune(&self, py: Python<'_>, index: &str, keep: Vec<Id>) -> PyResult<()> {
         self.prune_in(py, &self.namespace, index, keep)
     }

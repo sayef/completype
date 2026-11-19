@@ -292,7 +292,12 @@ impl Segment {
                 let (p, l) = split(order[i]);
                 (parts[p].segment, l)
             };
-            let has_fields = parts.iter().any(|p| p.segment.fields.is_some());
+            // Fields only when a surviving document has some, so older releases read the rest.
+            let has_fields = parts.iter().any(|p| p.segment.fields.is_some())
+                && (0..n).any(|i| {
+                    let (s, l) = doc(i);
+                    s.fields.is_some() && !s.fields_of(l).is_empty()
+                });
             write_header(
                 &mut sink,
                 config,

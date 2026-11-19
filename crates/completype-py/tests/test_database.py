@@ -240,7 +240,8 @@ def test_engine_transactions_write_only_what_changed(tmp_path):
     txn.prune("skills", [0, 1])
     txn.commit()
     engine.sync()
-    assert engine.namespace("default").get("skills").ids() == [0, 1]
+    # The hide marker for 3 stays: prune keeps hide markers.
+    assert engine.namespace("default").get("skills").ids() == [0, 1, 3]
     with pytest.raises(completype.InvalidInputError):
         database.begin().sync("skills", rows)
 
@@ -265,3 +266,42 @@ def test_transact_retries_when_another_writer_got_there_first(tmp_path):
     assert engine.transact(lambda txn: txn.sync("skills", [{"id": 1, "text": "Ours"}], ids=[1])) is None
     engine.sync()
     assert engine.namespace("default").get("skills").get(1).text == "Ours"
+
+
+def test_fields_come_from_pyarrow_polars_and_pandas_tables():
+    pa = pytest.importorskip("pyarrow")
+    pd = pytest.importorskip("pandas")
+    rows = [{"id": 1, "text": "Machine Learning"}, {"id": 2, "text": "Machine Vision"}]
+    maps = pa.table({
+        "id": [1, 2],
+        "text": ["Machine Learning", "Machine Vision"],
+        "fields": pa.array([[("lang", "en")], None], type=pa.map_(pa.string(), pa.string())),
+    })
+    frame = pd.DataFrame(rows).assign(fields=[{"lang": "en"}, float("nan")])
+    tables = [maps, frame]
+    try:
+        import polars as pl
+
+        tables.append(pl.DataFrame({"id": [1, 2], "text": ["Machine Learning", "Machine Vision"],
+                                    "fields": [{"lang": "en"}, {"lang": None}]}))
+    except ImportError:
+        pass
+    for table in tables:
+        index = completype.Index.from_documents(table)
+        assert (index.get(1).fields, index.get(2).fields) == ({"lang": "en"}, {})
+
+
+def test_async_transact_refuses_async_functions(tmp_path):
+    import asyncio
+
+    async def write(txn):
+        txn.sync("skills", [])
+
+    engine = completype.AsyncEngine(completype.connect(str(tmp_path)).engine(sync_every=None))
+    with pytest.raises(TypeError):
+        asyncio.run(engine.transact(write))
+
+
+def test_sync_outside_an_engine_transaction_names_engine_begin(tmp_path):
+    with pytest.raises(completype.InvalidInputError, match=r"Engine\.begin\(\)"):
+        completype.connect(str(tmp_path)).begin().sync("skills", [])
