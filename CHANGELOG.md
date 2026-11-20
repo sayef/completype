@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.2.3](https://github.com/sayef/completype/compare/v0.2.2...v0.2.3) - 2026-11-20
 
+### Fixed
+
+- A query that equals a document's whole abbreviation scores at least as a prefix match. It used to
+  drop to an infix match when the title also contained the query, so `Microsoft Excel` with the
+  abbreviation `EXCEL` ranked below less popular titles starting with "Excel".
+
+### Changed
+
+- Release wheels are built from `Cargo.lock` (`--locked`), and Dependabot waits 7 days after a
+  dependency's release before proposing it.
+
 ## [0.2.2](https://github.com/sayef/completype/compare/v0.2.1...v0.2.2) - 2026-11-19
 
 ### Fixed
