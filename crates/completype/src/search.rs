@@ -1032,8 +1032,9 @@ impl Index {
             let prev = merged.get(&doc).copied().filter(|p| p.fuzzy_distance == 0);
             merged.insert(
                 doc,
+                // The whole abbreviation matched, so the title merely containing the query lowers nothing.
                 Merged {
-                    from_prefix: prev.is_none_or(|p| p.from_prefix),
+                    from_prefix: true,
                     is_abbreviation: true,
                     is_exact: prev.is_some_and(|p| p.is_exact),
                     ..Merged::default()

@@ -69,6 +69,26 @@ fn suggestions_carry_text_key_and_highlights() {
 }
 
 #[test]
+fn an_abbreviation_ranks_the_same_whether_or_not_the_title_contains_the_query() {
+    let index = Index::from_documents(vec![
+        Document::keyed("services", "Excel Services", 0.575),
+        Document::keyed("excel", "Microsoft Excel", 1.0).with_abbreviation("EXCEL"),
+        Document::keyed("sheets", "Microsoft Spreadsheet", 1.0).with_abbreviation("EXCEL"),
+    ])
+    .unwrap();
+    let hits = index.complete("excel", 10);
+    let score = |key: &str| {
+        hits.iter()
+            .find(|h| h.key.as_deref() == Some(key))
+            .unwrap()
+            .score
+    };
+    assert_eq!(hits[0].key.as_deref(), Some("excel"));
+    assert!(score("excel") >= score("sheets"));
+    assert!(score("sheets") > score("services"));
+}
+
+#[test]
 fn contexts_filter_every_search() {
     let index = index();
     let books = SearchOptions::new(10).contexts(["books"]);
