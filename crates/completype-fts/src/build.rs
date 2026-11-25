@@ -47,7 +47,7 @@ pub struct SegmentBuilder {
     keywords: Vec<KeywordField>,
     numbers: Vec<NumericField>,
     stored: Vec<Option<Box<[u8]>>>,
-    /// The current document's terms, each to its slot in `tfs`.
+    /// The current document's terms with their frequency, or with positions their slot in `tfs`.
     counts: FxHashMap<String, u32>,
     tfs: Vec<u32>,
     /// `(slot, position)` of each token of the current document, when keeping positions.
@@ -143,6 +143,15 @@ impl SegmentBuilder {
 
     #[inline]
     fn count(&mut self, token: &str, position: u32) {
+        if !self.positions {
+            match self.counts.get_mut(token) {
+                Some(tf) => *tf += 1,
+                None => {
+                    self.counts.insert(token.to_owned(), 1);
+                }
+            }
+            return;
+        }
         let slot = match self.counts.get(token) {
             Some(&slot) => slot,
             None => {
@@ -153,9 +162,7 @@ impl SegmentBuilder {
             }
         };
         self.tfs[slot as usize] += 1;
-        if self.positions {
-            self.pending.push((slot, position));
-        }
+        self.pending.push((slot, position));
     }
 
     fn flush(&mut self, field: usize, doc: u32, length: u32) {
@@ -181,8 +188,12 @@ impl SegmentBuilder {
             }
             self.pending.clear();
         }
-        for (term, slot) in self.counts.drain() {
-            let tf = self.tfs[slot as usize];
+        for (term, value) in self.counts.drain() {
+            let (tf, slot) = if self.positions {
+                (self.tfs[value as usize], value)
+            } else {
+                (value, 0)
+            };
             let list = match field.postings.get_mut(term.as_str()) {
                 Some(list) => list,
                 None => field.postings.entry(term.into_boxed_str()).or_default(),
@@ -430,6 +441,8 @@ impl SegmentBuilder {
         let mut window = Vec::with_capacity(WINDOW);
         let mut position_terms = fst::MapBuilder::memory();
         let mut positions = Vec::new();
+        // Where postings stand every `positions::SKIP` windows, for the positions' skip entries.
+        let mut anchors: Vec<positions::Anchor> = Vec::new();
         for group in terms.chunk_by(|a, b| a.0 == b.0) {
             term_count += 1;
             let term = group[0].0;
@@ -437,11 +450,8 @@ impl SegmentBuilder {
                 position_terms
                     .insert(term.as_bytes(), positions.len() as u64)
                     .expect("sorted unique terms");
-                for &(_, _, list) in group {
-                    positions::write(&mut positions, &list.docs, &list.positions);
-                }
             }
-            if let [(_, field, List { docs, .. })] = group {
+            if let [(_, field, List { docs, positions: p })] = group {
                 if let [(doc, tf)] = docs.as_slice() {
                     let value = INLINE
                         | u64::from(*field) << INLINE_FIELD_SHIFT
@@ -450,6 +460,9 @@ impl SegmentBuilder {
                     dictionary
                         .insert(term.as_bytes(), value)
                         .expect("sorted unique terms");
+                    if self.positions {
+                        positions::write(&mut positions, docs, p, &[]);
+                    }
                     continue;
                 }
             }
@@ -457,7 +470,17 @@ impl SegmentBuilder {
                 .insert(term.as_bytes(), table.len() as u64)
                 .expect("sorted unique terms");
             write_varint(&mut table, group.len() as u32);
-            for &(_, field, List { docs: list, .. }) in group {
+            for &(
+                _,
+                field,
+                List {
+                    docs: list,
+                    positions: p,
+                },
+            ) in group
+            {
+                anchors.clear();
+                let (header_start, body_start) = (headers.len(), bodies.len());
                 let f = usize::from(field);
                 let field_norms = &norms[f * docs..(f + 1) * docs];
                 let lengths = &length_tables[f];
@@ -469,6 +492,16 @@ impl SegmentBuilder {
                 let mut previous = None;
                 for chunk in list.chunk_by(|a, b| a.0 as usize / WINDOW == b.0 as usize / WINDOW) {
                     let id = chunk[0].0 / WINDOW as u32;
+                    if self.positions
+                        && windows > 0
+                        && (windows as usize).is_multiple_of(positions::SKIP)
+                    {
+                        anchors.push(positions::Anchor {
+                            previous: previous.unwrap_or(0),
+                            headers: (headers.len() - header_start) as u32,
+                            body: (bodies.len() - body_start) as u32,
+                        });
+                    }
                     windows += 1;
                     window.clear();
                     window.extend(
@@ -493,6 +526,9 @@ impl SegmentBuilder {
                     previous = Some(id);
                 }
                 write_varint(&mut table, windows);
+                if self.positions {
+                    positions::write(&mut positions, list, p, &anchors);
+                }
             }
         }
         bodies.extend_from_slice(&[0; PADDING]);

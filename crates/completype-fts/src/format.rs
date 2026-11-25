@@ -126,6 +126,21 @@ impl Frequencies<'_> {
         let word = u32::from_le_bytes(self.packed[bit / 8..bit / 8 + 4].try_into().unwrap());
         ((word >> (bit % 8)) & ((1 << self.bits) - 1)) + 1
     }
+
+    /// Whether frequencies differ, so each must be read.
+    #[inline]
+    pub fn packed(&self) -> bool {
+        self.bits != 0
+    }
+
+    /// Sum of the frequencies before `rank`.
+    #[inline]
+    pub fn sum_before(&self, rank: usize) -> usize {
+        if self.bits == 0 {
+            return rank * self.constant as usize;
+        }
+        (0..rank).map(|r| self.get(r) as usize).sum()
+    }
 }
 
 pub(crate) fn pack_frequencies(out: &mut Vec<u8>, tfs: impl Iterator<Item = u32>, bits: u8) {
@@ -168,6 +183,16 @@ impl<'a> Headers<'a> {
             id: 0,
             body: 0,
             first: true,
+        }
+    }
+
+    /// Continues a term's headers at a window boundary, after window `previous`.
+    pub fn resume(bytes: &'a [u8], windows: u32, previous: u32, body: u32) -> Self {
+        Self {
+            id: previous,
+            body,
+            first: false,
+            ..Self::new(bytes, windows)
         }
     }
 

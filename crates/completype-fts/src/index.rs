@@ -195,8 +195,8 @@ impl Index {
         })
     }
 
-    /// Keeps token positions so queries can hold phrases; an index keeps the choice its first
-    /// commit made, as with the analyzer. Off by default: segments grow by about half.
+    /// Keeps token positions for phrases, fixed at the first commit like the analyzer. Off by
+    /// default: segments grow by a third on short texts and up to double on long ones.
     pub fn with_positions(mut self, on: bool) -> Self {
         self.positions = on;
         self

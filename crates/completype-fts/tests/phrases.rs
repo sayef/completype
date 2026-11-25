@@ -365,6 +365,10 @@ fn pruned_phrase_search_over_segments_deletes_merges_and_reordering_equals_exhau
                 );
                 let filtered = query.filter(Filter::keyword("none", "x").not());
                 assert_eq!(reader.query(&filtered), reader.query_exhaustive(&filtered));
+                let alone = Query::new(format!("\"{phrase}\"~{slop}"))
+                    .field("body", 1.0)
+                    .limit(k);
+                assert_eq!(reader.query(&alone), reader.query_exhaustive(&alone));
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -435,4 +439,47 @@ fn positions_leave_postings_untouched() {
         Searcher::new(&with).search(query, 10),
         Searcher::new(&without).search(query, 10)
     );
+}
+
+#[test]
+fn rare_words_lead_phrases_through_skip_entries_of_long_lists() {
+    let mut random = Random(13);
+    let docs: Vec<Vec<String>> = (0..40_000)
+        .map(|i| {
+            let mut words = random.words(12, 8);
+            if i % 97 == 0 && !words.is_empty() {
+                let at = random.below(words.len() as u64) as usize;
+                words.insert(at, format!("rare{}", random.below(3)));
+            }
+            words
+        })
+        .collect();
+    let mut builder = SegmentBuilder::default();
+    builder.positions(true);
+    for (i, doc) in docs.iter().enumerate() {
+        builder.add(format!("d{i}"), doc.iter().map(String::as_str));
+    }
+    let segment = Segment::from_bytes(builder.finish()).unwrap();
+    let mut searcher = Searcher::new(&segment);
+    for r in 0..3 {
+        let rare = format!("rare{r}");
+        for common in ["w0", "w1", "w3"] {
+            for words in [[common, rare.as_str()], [rare.as_str(), common]] {
+                let expected = docs
+                    .iter()
+                    .filter(|d| d.windows(2).any(|w| w[0] == words[0] && w[1] == words[1]))
+                    .count();
+                let phrases = [(words.as_slice(), 0, 1.0)];
+                let all = searcher.search_phrases([], &phrases, 100_000);
+                assert_eq!(all.len(), expected, "{words:?}");
+                for k in [1, 10, 100] {
+                    let terms = [(common, 0.3)];
+                    assert_eq!(
+                        searcher.search_phrases(terms, &phrases, k),
+                        searcher.search_phrases_exhaustive(terms, &phrases, k)
+                    );
+                }
+            }
+        }
+    }
 }

@@ -8,7 +8,7 @@ use memmap2::Mmap;
 
 use crate::document::Number;
 use crate::format::*;
-use crate::positions::{self, Blocks, Located};
+use crate::positions::{self, Located};
 use crate::stored;
 
 enum Storage {
@@ -197,7 +197,7 @@ impl Segment {
         let section = self.section(POSITIONS);
         let bodies = self.bodies(info);
         let (mut out, mut doc) = (Vec::new(), Vec::new());
-        for (window, block) in self.headers(info).zip(Blocks::new(section, located)) {
+        for (window, block) in self.headers(info).zip(positions::blocks(section, located)) {
             let (mask, tfs) = window.decode(bodies);
             let mut first = 0;
             for rank in 0..mask.count_ones() as usize {
@@ -417,6 +417,14 @@ impl Segment {
         match info.inline {
             Some((doc, tf)) => Headers::single(doc, tf),
             None => Headers::new(&self.section(HEADERS)[info.headers..], info.windows),
+        }
+    }
+
+    /// A term's header bytes, empty for a single posting kept in the dictionary.
+    pub(crate) fn header_bytes(&self, info: &TermInfo) -> &[u8] {
+        match info.inline {
+            Some(_) => &[],
+            None => &self.section(HEADERS)[info.headers..],
         }
     }
 

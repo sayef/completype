@@ -3,7 +3,7 @@ use std::collections::BinaryHeap;
 
 use crate::format::*;
 use crate::phrase::{self, MAX_WORDS};
-use crate::positions::{self, Blocks, Located};
+use crate::positions::{self, Cursor, Located, Walk};
 use crate::segment::{Segment, TermInfo};
 
 /// Most terms a pruned query takes; longer queries are scored exhaustively.
@@ -104,13 +104,14 @@ pub(crate) struct Phrase {
     slop: u32,
 }
 
-/// One phrase word's postings in a window, with each document's first position in the block.
+/// One phrase word's postings in a window and, once needed, its position block.
 #[derive(Clone, Copy)]
 struct MemberWindow<'a> {
     mask: u128,
     tfs: Frequencies<'a>,
-    starts: [u32; WINDOW + 1],
     block: (usize, u8),
+    /// Its frequency prefix sums in `PhraseScratch::prefixes`, or `u32::MAX` before any.
+    prefix: u32,
 }
 
 /// Space a window's phrase scoring reuses.
@@ -119,6 +120,8 @@ struct PhraseScratch<'a> {
     members: Vec<MemberWindow<'a>>,
     lists: Vec<Vec<u32>>,
     freqs: Vec<[f32; WINDOW]>,
+    prefixes: Vec<[u32; WINDOW + 1]>,
+    prefixes_used: usize,
 }
 
 /// Statistics of one text field, possibly spanning several segments.
@@ -223,10 +226,15 @@ fn saturation_bound(window: &Window, norms: &[u8], scoring: &Scoring) -> f32 {
     }
 }
 
-/// A window's score bound for a term, or for a phrase from its words' windows: a phrase occurs
-/// at most as often as its rarest word, so the smallest word bound holds.
+/// A window's score bound for a term: stored, or exact for a single posting.
 #[inline(always)]
-fn bound(numerator: f32, windows: &[Window], norms: &[u8], scoring: &Scoring) -> f32 {
+fn bound(numerator: f32, window: &Window, norms: &[u8], scoring: &Scoring) -> f32 {
+    numerator * saturation_bound(window, norms, scoring)
+}
+
+/// A phrase's bound from its words' windows: it occurs at most as often as its rarest word.
+#[inline(always)]
+fn phrase_bound(numerator: f32, windows: &[Window], norms: &[u8], scoring: &Scoring) -> f32 {
     let saturation = windows
         .iter()
         .map(|w| saturation_bound(w, norms, scoring))
@@ -274,8 +282,8 @@ pub struct Searcher<'s> {
     touched: Vec<u32>,
     /// Each term's windows; a phrase keeps one per word for every window all its words share.
     lists: Vec<Vec<Window>>,
-    /// Position blocks matching `lists`, for phrases.
-    blocks: Vec<Vec<(usize, u8)>>,
+    /// For phrases, each window's rank among its word's windows, matching `lists`.
+    ranks: Vec<Vec<u32>>,
     /// `slots[t * windows + w]`: where window `w` sits in `lists[t]`, valid while `present` says so.
     slots: Vec<u32>,
     order: Vec<u32>,
@@ -304,7 +312,7 @@ impl<'s> Searcher<'s> {
             present: vec![0; windows],
             touched: Vec::new(),
             lists: Vec::new(),
-            blocks: Vec::new(),
+            ranks: Vec::new(),
             slots: Vec::new(),
             order: Vec::new(),
             counts: vec![0; BUCKETS + 1],
@@ -489,12 +497,23 @@ impl<'s> Searcher<'s> {
             return self.exhaustive_into(query, top, base);
         }
         let guard = 1.0 + 8.0 * (query.len() as f32 + 2.0) * f32::EPSILON;
+        if let [term @ QueryTerm {
+            phrase: Some(phrase),
+            ..
+        }] = query
+        {
+            return self.collect_phrase(term, phrase, top, base, guard);
+        }
         let start = std::time::Instant::now();
         self.scan(query);
         self.stats.scan_micros = start.elapsed().as_micros() as u64;
         self.stats.windows_touched = self.touched.len();
         let start = std::time::Instant::now();
-        self.best_first(query, top, base, guard);
+        if query.iter().any(|t| t.phrase.is_some()) {
+            self.best_first::<true>(query, top, base, guard);
+        } else {
+            self.best_first::<false>(query, top, base, guard);
+        }
         self.stats.score_micros = start.elapsed().as_micros() as u64;
         for &w in &self.touched {
             self.bounds[w as usize] = 0.0;
@@ -511,7 +530,7 @@ impl<'s> Searcher<'s> {
     fn scan(&mut self, query: &[QueryTerm]) {
         if self.lists.len() < query.len() {
             self.lists.resize_with(query.len(), Vec::new);
-            self.blocks.resize_with(query.len(), Vec::new);
+            self.ranks.resize_with(query.len(), Vec::new);
         }
         let windows = self.segment.windows();
         if self.slots.len() < query.len() * windows {
@@ -540,55 +559,53 @@ impl<'s> Searcher<'s> {
                 }
                 self.present[w] |= 1 << t;
                 self.slots[t * windows + w] = list.len() as u32;
-                self.bounds[w] += bound(term.numerator, &[window], norms, scoring);
+                self.bounds[w] += bound(term.numerator, &window, norms, scoring);
                 list.push(window);
             }
         }
     }
 
-    /// Keeps the windows every word of a phrase shares, with their position blocks.
+    /// Keeps the windows every word of a phrase shares, led by its rarest word, which the others
+    /// seek to through their skip entries.
     fn scan_phrase(&mut self, t: usize, term: &QueryTerm, phrase: &Phrase) {
         let segment = self.segment;
         let section = segment.positions_section();
-        let (list, blocks) = (&mut self.lists[t], &mut self.blocks[t]);
+        let (list, ranks) = (&mut self.lists[t], &mut self.ranks[t]);
         list.clear();
-        blocks.clear();
-        let m = phrase.members.len();
+        ranks.clear();
         let windows = segment.windows();
         let norms = segment.norms(term.field);
         let scoring = self.scoring[usize::from(term.field)]
             .as_deref()
             .expect("prepared fields have scoring");
-        let mut cursors: Vec<_> = phrase
-            .members
-            .iter()
-            .map(|(info, located)| {
-                self.stats.headers_read += info.windows as usize;
-                segment.headers(info).zip(Blocks::new(section, *located))
-            })
-            .collect();
-        let mut current = Vec::with_capacity(m);
-        for cursor in &mut cursors {
-            match cursor.next() {
-                Some(c) => current.push(c),
+        let mut cursors = Vec::with_capacity(phrase.members.len());
+        for (info, located) in &phrase.members {
+            let headers = segment.headers(info);
+            let bytes = segment.header_bytes(info);
+            match Cursor::new(headers, bytes, section, *located, info) {
+                Some(cursor) => cursors.push(cursor),
                 None => return,
             }
         }
-        let mut shared = Vec::with_capacity(m);
+        let lead = (0..cursors.len())
+            .min_by_key(|&j| phrase.members[j].0.windows)
+            .unwrap();
+        let mut shared = Vec::with_capacity(cursors.len());
         loop {
-            let target = current.iter().map(|c| c.0.id).max().unwrap();
-            let mut aligned = true;
-            for (cursor, c) in cursors.iter_mut().zip(current.iter_mut()) {
-                while c.0.id < target {
-                    match cursor.next() {
-                        Some(next) => *c = next,
-                        None => return,
+            let mut target = cursors[lead].window.id;
+            'align: loop {
+                for cursor in cursors.iter_mut() {
+                    if !cursor.seek(target) {
+                        self.stats.headers_read +=
+                            cursors.iter().map(|c| c.rank as usize).sum::<usize>();
+                        return;
+                    }
+                    if cursor.window.id > target {
+                        target = cursor.window.id;
+                        continue 'align;
                     }
                 }
-                aligned &= c.0.id == target;
-            }
-            if !aligned {
-                continue;
+                break;
             }
             let w = target as usize;
             if !self.deleted.is_some_and(|d| window_bits(d, w) == u128::MAX) {
@@ -596,24 +613,125 @@ impl<'s> Searcher<'s> {
                     self.touched.push(target);
                 }
                 self.present[w] |= 1 << t;
-                self.slots[t * windows + w] = (list.len() / m) as u32;
+                self.slots[t * windows + w] = (list.len() / cursors.len()) as u32;
                 shared.clear();
-                shared.extend(current.iter().map(|c| c.0));
-                self.bounds[w] += bound(term.numerator, &shared, norms, scoring);
+                shared.extend(cursors.iter().map(|c| c.window));
+                self.bounds[w] += phrase_bound(term.numerator, &shared, norms, scoring);
                 list.extend_from_slice(&shared);
-                blocks.extend(current.iter().map(|c| c.1));
+                ranks.extend(cursors.iter().map(|c| c.rank));
             }
-            for (cursor, c) in cursors.iter_mut().zip(current.iter_mut()) {
-                match cursor.next() {
-                    Some(next) => *c = next,
-                    None => return,
-                }
+            if !cursors[lead].advance() {
+                self.stats.headers_read += cursors.iter().map(|c| c.rank as usize).sum::<usize>();
+                return;
             }
         }
     }
 
+    /// A query of one phrase, in document order: windows its rarest word leads to that every word
+    /// shares, skipped when their bound cannot reach the threshold.
+    fn collect_phrase(
+        &mut self,
+        term: &QueryTerm,
+        phrase: &Phrase,
+        top: &mut TopK,
+        base: u64,
+        guard: f32,
+    ) {
+        let segment: &'s Segment = self.segment;
+        let section = segment.positions_section();
+        let norms = segment.norms(term.field);
+        let scoring = self.scoring(term.field);
+        let mut cursors = Vec::with_capacity(phrase.members.len());
+        for (info, located) in &phrase.members {
+            let headers = segment.headers(info);
+            let bytes = segment.header_bytes(info);
+            match Cursor::new(headers, bytes, section, *located, info) {
+                Some(cursor) => cursors.push(cursor),
+                None => return,
+            }
+        }
+        let lead = (0..cursors.len())
+            .min_by_key(|&j| phrase.members[j].0.windows)
+            .unwrap();
+        let mut scratch = PhraseScratch::default();
+        scratch.lists.resize_with(cursors.len(), Vec::new);
+        let mut shared = Vec::with_capacity(cursors.len());
+        let mut walks = vec![Walk::default(); cursors.len()];
+        let mut stats = Stats::default();
+        'windows: loop {
+            let mut target = cursors[lead].window.id;
+            'align: loop {
+                for cursor in cursors.iter_mut() {
+                    if !cursor.seek(target) {
+                        break 'windows;
+                    }
+                    if cursor.window.id > target {
+                        target = cursor.window.id;
+                        continue 'align;
+                    }
+                }
+                break;
+            }
+            stats.windows_touched += 1;
+            shared.clear();
+            shared.extend(cursors.iter().map(|c| c.window));
+            let w = target as usize;
+            let live = self.deleted.map_or(u128::MAX, |d| !window_bits(d, w));
+            if live != 0
+                && phrase_bound(term.numerator, &shared, norms, scoring) * guard >= top.threshold()
+            {
+                stats.windows_scored += 1;
+                scratch.members.clear();
+                scratch.prefixes_used = 0;
+                let mut maybe = live;
+                for (j, window) in shared.iter().enumerate() {
+                    let (mask, tfs) = window.decode(segment.bodies(&phrase.members[j].0));
+                    maybe &= mask;
+                    scratch.members.push(MemberWindow {
+                        mask,
+                        tfs,
+                        block: (0, 0),
+                        prefix: u32::MAX,
+                    });
+                }
+                if maybe != 0 {
+                    for (j, member) in scratch.members.iter_mut().enumerate() {
+                        member.block = phrase.members[j].1.block_after(
+                            section,
+                            cursors[j].rank as usize,
+                            &mut walks[j],
+                        );
+                    }
+                }
+                while maybe != 0 {
+                    let off = maybe.trailing_zeros() as usize;
+                    maybe &= maybe - 1;
+                    stats.postings_scored += 1;
+                    let freq = self.phrase_frequency(phrase, &mut scratch, 0, off);
+                    if freq > 0.0 {
+                        let doc = w * WINDOW + off;
+                        top.offer(Ranked {
+                            score: term.numerator * scoring.phrase_saturation(freq, norms[doc]),
+                            position: base + doc as u64,
+                        });
+                    }
+                }
+            }
+            if !cursors[lead].advance() {
+                break;
+            }
+        }
+        self.stats = stats;
+    }
+
     /// Scores windows in descending bound order until no remaining window can enter the top k.
-    fn best_first(&mut self, query: &[QueryTerm], top: &mut TopK, base: u64, guard: f32) {
+    fn best_first<const PHRASES: bool>(
+        &mut self,
+        query: &[QueryTerm],
+        top: &mut TopK,
+        base: u64,
+        guard: f32,
+    ) {
         let max = self
             .touched
             .iter()
@@ -651,8 +769,11 @@ impl<'s> Searcher<'s> {
                     continue;
                 }
                 self.stats.windows_scored += 1;
-                self.stats.postings_scored +=
-                    self.window(query, w, guard, top, base, &mut local, &mut scratch);
+                self.stats.postings_scored += if PHRASES {
+                    self.window_phrases(query, w, guard, top, base, &mut local, &mut scratch)
+                } else {
+                    self.window_terms(query, w, guard, top, base, &mut local)
+                };
                 self.bounds[w as usize] = DONE;
             }
         }
@@ -671,39 +792,16 @@ impl<'s> Searcher<'s> {
                 continue;
             }
             self.stats.windows_scored += 1;
-            self.stats.postings_scored +=
-                self.window(query, w, guard, top, base, &mut local, &mut scratch);
+            self.stats.postings_scored += if PHRASES {
+                self.window_phrases(query, w, guard, top, base, &mut local, &mut scratch)
+            } else {
+                self.window_terms(query, w, guard, top, base, &mut local)
+            };
         }
     }
 
-    /// The windows of term `t` in window `w`: one, or one per word of a phrase.
-    #[inline(always)]
-    fn windows_of(&self, query: &[QueryTerm], t: usize, w: u32) -> (&[Window], usize) {
-        let m = query[t].phrase.as_ref().map_or(1, |p| p.members.len());
-        let slot = self.slots[t * self.segment.windows() + w as usize] as usize;
-        (&self.lists[t][slot * m..(slot + 1) * m], slot * m)
-    }
-
-    /// Frequency of phrase `t` in the document at `off`, from its words' windows in `members`.
-    fn phrase_frequency(
-        &self,
-        phrase: &Phrase,
-        members: &[MemberWindow],
-        lists: &mut [Vec<u32>],
-        off: usize,
-    ) -> f32 {
-        let section = self.segment.positions_section();
-        for (member, list) in members.iter().zip(lists.iter_mut()) {
-            let rank = (member.mask & ((1_u128 << off) - 1)).count_ones() as usize;
-            let count = positions::kept(member.tfs.get(rank));
-            let first = member.starts[rank] as usize;
-            positions::read(section, member.block, first, count, list);
-        }
-        phrase::frequency(lists, &phrase.order, phrase.slop)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn window(
+    /// Scores window `w` for a query without phrases.
+    fn window_terms(
         &self,
         query: &[QueryTerm],
         w: u32,
@@ -711,7 +809,6 @@ impl<'s> Searcher<'s> {
         top: &mut TopK,
         segment_base: u64,
         local: &mut Vec<(usize, f32, u128, Window)>,
-        scratch: &mut PhraseScratch<'s>,
     ) -> usize {
         let mut scored = 0;
         let base = w as usize * WINDOW;
@@ -724,15 +821,16 @@ impl<'s> Searcher<'s> {
         while bits != 0 {
             let t = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            let (windows, _) = self.windows_of(query, t, w);
+            let window =
+                self.lists[t][self.slots[t * self.segment.windows() + w as usize] as usize];
             let field = query[t].field;
             let bound = bound(
                 query[t].numerator,
-                windows,
+                &window,
                 self.segment.norms(field),
                 self.scoring(field),
             );
-            local.push((t, bound, 0, windows[0]));
+            local.push((t, bound, 0, window));
         }
         // Terms whose bounds together cannot reach the threshold only score documents others found.
         let threshold = top.threshold();
@@ -750,98 +848,20 @@ impl<'s> Searcher<'s> {
             local.sort_unstable_by_key(|entry| entry.0);
         }
         let mut candidates = 0_u128;
-        let has_phrases = local.iter().any(|e| query[e.0].phrase.is_some());
-        if has_phrases {
-            scratch.members.clear();
-            if scratch.freqs.len() < local.len() {
-                scratch.freqs.resize(local.len(), [0.0; WINDOW]);
+        for entry in local.iter_mut() {
+            let bodies = self.segment.bodies(&query[entry.0].info);
+            entry.2 = entry.3.decode(bodies).0;
+            if essential & (1 << entry.0) != 0 {
+                candidates |= entry.2;
             }
-        }
-        // A phrase's entry keeps where its words start in `scratch.members` in place of a window.
-        let mut starts = [0_usize; 64];
-        for (k, entry) in local.iter_mut().enumerate() {
-            let term = &query[entry.0];
-            let Some(phrase) = &term.phrase else {
-                let bodies = self.segment.bodies(&term.info);
-                entry.2 = entry.3.decode(bodies).0;
-                if essential & (1 << entry.0) != 0 {
-                    candidates |= entry.2;
-                }
-                continue;
-            };
-            let (windows, at) = self.windows_of(query, entry.0, w);
-            starts[k] = scratch.members.len();
-            let mut maybe = live;
-            for (j, window) in windows.iter().enumerate() {
-                let segment: &'s Segment = self.segment;
-                let (mask, tfs) = window.decode(segment.bodies(&phrase.members[j].0));
-                let mut member = MemberWindow {
-                    mask,
-                    tfs,
-                    starts: [0; WINDOW + 1],
-                    block: self.blocks[entry.0][at + j],
-                };
-                for rank in 0..mask.count_ones() as usize {
-                    member.starts[rank + 1] =
-                        member.starts[rank] + positions::kept(tfs.get(rank)) as u32;
-                }
-                scratch.members.push(member);
-                maybe &= mask;
-            }
-            let m = windows.len();
-            if scratch.lists.len() < m {
-                scratch.lists.resize_with(m, Vec::new);
-            }
-            if essential & (1 << entry.0) == 0 {
-                entry.2 = maybe;
-                continue;
-            }
-            let members = &scratch.members[starts[k]..starts[k] + m];
-            let mut found = 0_u128;
-            while maybe != 0 {
-                let off = maybe.trailing_zeros() as usize;
-                maybe &= maybe - 1;
-                let freq = self.phrase_frequency(phrase, members, &mut scratch.lists, off);
-                if freq > 0.0 {
-                    found |= 1 << off;
-                    scratch.freqs[k][off] = freq;
-                }
-            }
-            entry.2 = found;
-            candidates |= found;
         }
         candidates &= live;
         let mut scores = [0.0_f32; WINDOW];
-        for (k, &(t, _, mask, window)) in local.iter().enumerate() {
+        for &(t, _, mask, window) in local.iter() {
             let term = &query[t];
+            let (_, tfs) = window.decode(self.segment.bodies(&term.info));
             let norms = &self.segment.norms(term.field)[base..end];
             let scoring = self.scoring(term.field);
-            if let Some(phrase) = &term.phrase {
-                if essential & (1 << t) != 0 {
-                    let mut m = mask & candidates;
-                    while m != 0 {
-                        let off = m.trailing_zeros() as usize;
-                        m &= m - 1;
-                        let freq = scratch.freqs[k][off];
-                        scores[off] += term.numerator * scoring.phrase_saturation(freq, norms[off]);
-                        scored += 1;
-                    }
-                    continue;
-                }
-                let members = &scratch.members[starts[k]..starts[k] + phrase.members.len()];
-                let mut m = mask & candidates;
-                while m != 0 {
-                    let off = m.trailing_zeros() as usize;
-                    m &= m - 1;
-                    let freq = self.phrase_frequency(phrase, members, &mut scratch.lists, off);
-                    if freq > 0.0 {
-                        scores[off] += term.numerator * scoring.phrase_saturation(freq, norms[off]);
-                    }
-                    scored += 1;
-                }
-                continue;
-            }
-            let (_, tfs) = window.decode(self.segment.bodies(&term.info));
             if essential & (1 << t) != 0 && live == u128::MAX {
                 let (mut m, mut rank) = (mask, 0);
                 while m != 0 {
@@ -860,6 +880,217 @@ impl<'s> Searcher<'s> {
                     scores[off] += term.numerator * scoring.saturation(tfs.get(rank), norms[off]);
                     scored += 1;
                 }
+            }
+        }
+        while candidates != 0 {
+            let off = candidates.trailing_zeros() as usize;
+            candidates &= candidates - 1;
+            top.offer(Ranked {
+                score: scores[off],
+                position: segment_base + (base + off) as u64,
+            });
+        }
+        scored
+    }
+
+    /// The windows of term `t` in window `w`: one, or one per word of a phrase.
+    #[inline(always)]
+    fn windows_of(&self, query: &[QueryTerm], t: usize, w: u32) -> (&[Window], usize) {
+        let m = query[t].phrase.as_ref().map_or(1, |p| p.members.len());
+        let slot = self.slots[t * self.segment.windows() + w as usize] as usize;
+        (&self.lists[t][slot * m..(slot + 1) * m], slot * m)
+    }
+
+    /// Frequency of a phrase in the document at `off`, from its words' windows in
+    /// `scratch.members[start..]`.
+    fn phrase_frequency(
+        &self,
+        phrase: &Phrase,
+        scratch: &mut PhraseScratch,
+        start: usize,
+        off: usize,
+    ) -> f32 {
+        let section = self.segment.positions_section();
+        let m = phrase.members.len();
+        let members = &mut scratch.members[start..start + m];
+        let mut spans = [(0_usize, 0_usize); MAX_WORDS];
+        for (member, span) in members.iter_mut().zip(spans.iter_mut()) {
+            let rank = (member.mask & ((1_u128 << off) - 1)).count_ones() as usize;
+            let count = positions::kept(member.tfs.get(rank));
+            let first = if !member.tfs.packed() {
+                member.tfs.sum_before(rank)
+            } else {
+                // Frequencies before each rank, summed once per window and word.
+                if member.prefix == u32::MAX {
+                    member.prefix = scratch.prefixes_used as u32;
+                    scratch.prefixes_used += 1;
+                    if scratch.prefixes.len() < scratch.prefixes_used {
+                        scratch.prefixes.push([0; WINDOW + 1]);
+                    }
+                    let prefix = &mut scratch.prefixes[member.prefix as usize];
+                    for r in 0..member.mask.count_ones() as usize {
+                        prefix[r + 1] = prefix[r] + member.tfs.get(r);
+                    }
+                }
+                scratch.prefixes[member.prefix as usize][rank] as usize
+            };
+            *span = (first, count);
+        }
+        // An exact phrase whose words each occur once here matches only where they line up.
+        if phrase.slop == 0 && m == phrase.order.len() && spans[..m].iter().all(|s| s.1 == 1) {
+            let at = |i: usize| {
+                let j = usize::from(phrase.order[i]);
+                u64::from(positions::read_one(section, members[j].block, spans[j].0))
+            };
+            let first = at(0);
+            return f32::from(u8::from((1..m).all(|i| at(i) == first + i as u64)));
+        }
+        for ((member, span), list) in members.iter().zip(spans).zip(scratch.lists.iter_mut()) {
+            positions::read(section, member.block, span.0, span.1, list);
+        }
+        phrase::frequency(&scratch.lists[..m], &phrase.order, phrase.slop)
+    }
+
+    /// Scores window `w` for a query with phrases, reading positions only where all of a
+    /// phrase's words occur.
+    #[allow(clippy::too_many_arguments)]
+    fn window_phrases(
+        &self,
+        query: &[QueryTerm],
+        w: u32,
+        guard: f32,
+        top: &mut TopK,
+        segment_base: u64,
+        local: &mut Vec<(usize, f32, u128, Window)>,
+        scratch: &mut PhraseScratch<'s>,
+    ) -> usize {
+        let segment: &'s Segment = self.segment;
+        let mut scored = 0;
+        let base = w as usize * WINDOW;
+        let live = self
+            .deleted
+            .map_or(u128::MAX, |d| !window_bits(d, w as usize));
+        let end = (base + WINDOW).min(segment.len());
+        local.clear();
+        let mut bits = self.present[w as usize];
+        while bits != 0 {
+            let t = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let (windows, _) = self.windows_of(query, t, w);
+            let field = query[t].field;
+            let norms = segment.norms(field);
+            let bound = match query[t].phrase {
+                Some(_) => phrase_bound(query[t].numerator, windows, norms, self.scoring(field)),
+                None => bound(query[t].numerator, &windows[0], norms, self.scoring(field)),
+            };
+            local.push((t, bound, 0, windows[0]));
+        }
+        // Terms whose bounds together cannot reach the threshold only score documents others found.
+        let threshold = top.threshold();
+        let mut essential = u64::MAX;
+        if threshold > 0.0 {
+            local.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+            let mut optional = 0.0;
+            for entry in local.iter() {
+                if (optional + entry.1) * guard >= threshold {
+                    break;
+                }
+                optional += entry.1;
+                essential &= !(1 << entry.0);
+            }
+            local.sort_unstable_by_key(|entry| entry.0);
+        }
+        let mut candidates = 0_u128;
+        scratch.members.clear();
+        scratch.prefixes_used = 0;
+        if scratch.freqs.len() < local.len() {
+            scratch.freqs.resize(local.len(), [0.0; WINDOW]);
+        }
+        // Where each phrase entry's words start in `scratch.members`.
+        let mut starts = [0_usize; MAX_TERMS];
+        let section = segment.positions_section();
+        for (k, entry) in local.iter_mut().enumerate() {
+            let term = &query[entry.0];
+            let Some(phrase) = &term.phrase else {
+                entry.2 = entry.3.decode(segment.bodies(&term.info)).0;
+                if essential & (1 << entry.0) != 0 {
+                    candidates |= entry.2;
+                }
+                continue;
+            };
+            let (windows, at) = self.windows_of(query, entry.0, w);
+            starts[k] = scratch.members.len();
+            let mut maybe = live;
+            for (j, window) in windows.iter().enumerate() {
+                let (mask, tfs) = window.decode(segment.bodies(&phrase.members[j].0));
+                scratch.members.push(MemberWindow {
+                    mask,
+                    tfs,
+                    block: (0, 0),
+                    prefix: u32::MAX,
+                });
+                maybe &= mask;
+            }
+            if maybe == 0 {
+                entry.2 = 0;
+                continue;
+            }
+            let ranks = &self.ranks[entry.0][at..at + windows.len()];
+            for (j, member) in scratch.members[starts[k]..].iter_mut().enumerate() {
+                member.block = phrase.members[j].1.block(section, ranks[j] as usize);
+            }
+            let m = windows.len();
+            if scratch.lists.len() < m {
+                scratch.lists.resize_with(m, Vec::new);
+            }
+            if essential & (1 << entry.0) == 0 {
+                entry.2 = maybe;
+                continue;
+            }
+            let mut found = 0_u128;
+            while maybe != 0 {
+                let off = maybe.trailing_zeros() as usize;
+                maybe &= maybe - 1;
+                let freq = self.phrase_frequency(phrase, scratch, starts[k], off);
+                if freq > 0.0 {
+                    found |= 1 << off;
+                    scratch.freqs[k][off] = freq;
+                }
+            }
+            entry.2 = found;
+            candidates |= found;
+        }
+        candidates &= live;
+        let mut scores = [0.0_f32; WINDOW];
+        for (k, &(t, _, mask, window)) in local.iter().enumerate() {
+            let term = &query[t];
+            let norms = &segment.norms(term.field)[base..end];
+            let scoring = self.scoring(term.field);
+            let mut m = mask & candidates;
+            if let Some(phrase) = &term.phrase {
+                let essential = essential & (1 << t) != 0;
+                while m != 0 {
+                    let off = m.trailing_zeros() as usize;
+                    m &= m - 1;
+                    let freq = if essential {
+                        scratch.freqs[k][off]
+                    } else {
+                        self.phrase_frequency(phrase, scratch, starts[k], off)
+                    };
+                    if freq > 0.0 {
+                        scores[off] += term.numerator * scoring.phrase_saturation(freq, norms[off]);
+                    }
+                    scored += 1;
+                }
+                continue;
+            }
+            let (_, tfs) = window.decode(segment.bodies(&term.info));
+            while m != 0 {
+                let off = m.trailing_zeros() as usize;
+                m &= m - 1;
+                let rank = (mask & ((1_u128 << off) - 1)).count_ones() as usize;
+                scores[off] += term.numerator * scoring.saturation(tfs.get(rank), norms[off]);
+                scored += 1;
             }
         }
         while candidates != 0 {
