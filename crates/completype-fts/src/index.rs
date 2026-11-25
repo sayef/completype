@@ -10,10 +10,12 @@ use crate::search::{Collection, FieldStats, Ranked, TopK};
 
 /// Postings lists by text field and term, in document order.
 type Postings = BTreeMap<(usize, Vec<u8>), Vec<(u32, u32)>>;
-use crate::{Analyzer, Document, Filter, Query, Searcher, Segment, SegmentBuilder};
+use crate::{Analyzer, Document, Filter, Query, Searcher, Segment, SegmentBuilder, StopWords};
 
 const MANIFEST: &str = "manifest";
-const MANIFEST_HEADER: &str = "completype-fts 1";
+const MANIFEST_HEADER: &str = "completype-fts 2";
+/// Written before the analyzer was recorded.
+const MANIFEST_V1: &str = "completype-fts 1";
 const LOCK: &str = "writer.lock";
 /// Merges the smallest segments once a commit leaves more than this many.
 const MAX_SEGMENTS: usize = 10;
@@ -29,6 +31,7 @@ pub struct Index {
     analyzer: Analyzer,
     reorder: Reordering,
     first_letter_typos: bool,
+    stop_words: Option<StopWords>,
 }
 
 /// When segments are written with similar documents placed together.
@@ -61,16 +64,31 @@ fn deletes_file(number: u64, generation: u64) -> String {
     format!("{number:010}.{generation}.del")
 }
 
-fn read_manifest(dir: &Path) -> io::Result<Vec<Entry>> {
+struct Manifest {
+    /// The analyzer that made the segments; `None` before the first commit and in version 1.
+    analyzer: Option<Analyzer>,
+    entries: Vec<Entry>,
+}
+
+fn invalid(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn read_manifest(dir: &Path) -> io::Result<Manifest> {
     let text = fs::read_to_string(dir.join(MANIFEST))?;
-    let mut lines = text.lines();
-    if lines.next() != Some(MANIFEST_HEADER) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "not a completype-fts index",
-        ));
-    }
-    lines
+    let mut lines = text.lines().peekable();
+    let analyzer = match lines.next() {
+        Some(MANIFEST_HEADER) => match lines.next_if(|l| l.starts_with("analyzer ")) {
+            Some(line) => Some(
+                Analyzer::from_spec(&line["analyzer ".len()..])
+                    .ok_or_else(|| invalid(format!("unknown analyzer: {line}")))?,
+            ),
+            None => None,
+        },
+        Some(MANIFEST_V1) => None,
+        _ => return Err(invalid("not a completype-fts index".to_owned())),
+    };
+    let entries = lines
         .filter(|l| !l.is_empty())
         .map(|line| {
             let mut parts = line.split(' ');
@@ -84,13 +102,11 @@ fn read_manifest(dir: &Path) -> io::Result<Vec<Entry>> {
             });
             match (number, deletes) {
                 (Some(number), Some(Ok(deletes))) => Ok(Entry { number, deletes }),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("bad manifest line: {line}"),
-                )),
+                _ => Err(invalid(format!("bad manifest line: {line}"))),
             }
         })
-        .collect()
+        .collect::<io::Result<_>>()?;
+    Ok(Manifest { analyzer, entries })
 }
 
 /// Replaces a file atomically: write beside it, sync, rename.
@@ -102,8 +118,11 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(tmp, path)
 }
 
-fn write_manifest(dir: &Path, entries: &[Entry]) -> io::Result<()> {
+fn write_manifest(dir: &Path, analyzer: Option<&Analyzer>, entries: &[Entry]) -> io::Result<()> {
     let mut text = format!("{MANIFEST_HEADER}\n");
+    if let Some(analyzer) = analyzer {
+        text.push_str(&format!("analyzer {}\n", analyzer.spec()));
+    }
     for e in entries {
         let deletes = e.deletes.map_or("-".to_owned(), |g| g.to_string());
         text.push_str(&format!("{} {deletes}\n", e.number));
@@ -130,20 +149,44 @@ impl Index {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
         if !dir.join(MANIFEST).exists() {
-            write_manifest(&dir, &[])?;
+            write_manifest(&dir, None, &[])?;
         }
-        read_manifest(&dir)?;
+        let analyzer = read_manifest(&dir)?.analyzer.unwrap_or_default();
         Ok(Self {
             dir,
-            analyzer: Analyzer::default(),
+            analyzer,
             reorder: Reordering::OnMerge,
             first_letter_typos: false,
+            stop_words: None,
         })
     }
 
+    /// Analyzes documents and queries; an index keeps the one its first commit used, so
+    /// [`Index::writer`] and [`Index::reader`] refuse a different one.
     pub fn with_analyzer(mut self, analyzer: Analyzer) -> Self {
         self.analyzer = analyzer;
         self
+    }
+
+    /// Leaves these words out of queries, unless a query has nothing else.
+    pub fn with_stop_words(mut self, stop_words: StopWords) -> Self {
+        self.stop_words = Some(stop_words);
+        self
+    }
+
+    /// Fails when the committed segments were analyzed differently.
+    fn check_analyzer(&self, manifest: &Manifest) -> io::Result<()> {
+        match &manifest.analyzer {
+            Some(indexed) if *indexed != self.analyzer => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{} was indexed with analyzer {indexed}, not {}",
+                    self.dir.display(),
+                    self.analyzer
+                ),
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// Which segments place similar documents together: smaller and faster, slower to write.
@@ -165,6 +208,7 @@ impl Index {
 
     /// The only writer; fails while another holds the lock.
     pub fn writer(&self) -> io::Result<Writer> {
+        self.check_analyzer(&read_manifest(&self.dir)?)?;
         let lock = self.dir.join(LOCK);
         fs::OpenOptions::new()
             .write(true)
@@ -198,7 +242,9 @@ impl Index {
 
     /// A snapshot of the committed segments.
     pub fn reader(&self) -> io::Result<Reader> {
-        let entries = read_manifest(&self.dir)?;
+        let manifest = read_manifest(&self.dir)?;
+        self.check_analyzer(&manifest)?;
+        let entries = manifest.entries;
         let mut segments = Vec::with_capacity(entries.len());
         for entry in &entries {
             let segment = Segment::open(self.dir.join(segment_file(entry.number)))?;
@@ -227,6 +273,11 @@ impl Index {
             })
             .collect();
         Ok(Reader {
+            stops: self
+                .stop_words
+                .as_ref()
+                .map(|s| Stops::new(&self.analyzer, s))
+                .unwrap_or_default(),
             analyzer: self.analyzer.clone(),
             first_letter_typos: self.first_letter_typos,
             segments,
@@ -285,7 +336,7 @@ impl Writer {
     /// Writes buffered documents as a segment and records deletions, atomically.
     pub fn commit(&mut self) -> io::Result<()> {
         let dir = self.index.dir.clone();
-        let mut entries = read_manifest(&dir)?;
+        let mut entries = read_manifest(&dir)?.entries;
         let mut obsolete = Vec::new();
         for entry in entries.iter_mut() {
             let segment = Segment::open(dir.join(segment_file(entry.number)))?;
@@ -326,7 +377,7 @@ impl Writer {
             };
             entries.push(entry);
         }
-        write_manifest(&dir, &entries)?;
+        write_manifest(&dir, Some(&self.index.analyzer), &entries)?;
         for file in obsolete {
             let _ = fs::remove_file(dir.join(file));
         }
@@ -340,7 +391,7 @@ impl Writer {
 
     /// Merges every committed segment into one, dropping deleted documents.
     pub fn merge(&mut self) -> io::Result<()> {
-        let count = read_manifest(&self.index.dir)?.len();
+        let count = read_manifest(&self.index.dir)?.entries.len();
         if count > 1 || self.index.reader()?.segments.iter().any(|s| s.1.is_some()) {
             self.merge_smallest(count)?;
         }
@@ -349,7 +400,7 @@ impl Writer {
 
     fn merge_smallest(&mut self, count: usize) -> io::Result<()> {
         let dir = self.index.dir.clone();
-        let entries = read_manifest(&dir)?;
+        let entries = read_manifest(&dir)?.entries;
         let mut sized: Vec<(u64, usize)> = entries
             .iter()
             .map(|e| {
@@ -381,7 +432,7 @@ impl Writer {
             number,
             deletes: None,
         });
-        write_manifest(&dir, &kept)?;
+        write_manifest(&dir, Some(&self.index.analyzer), &kept)?;
         drop(sources);
         for entry in merged {
             let _ = fs::remove_file(dir.join(segment_file(entry.number)));
@@ -492,9 +543,35 @@ fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentB
     builder.finish()
 }
 
+/// Stop words as analyzed: each word, and its term after stemming.
+#[derive(Default)]
+struct Stops {
+    words: FxHashSet<String>,
+    terms: FxHashSet<String>,
+}
+
+impl Stops {
+    /// Keeps the stop words that analyze to a single term.
+    fn new(analyzer: &Analyzer, list: &StopWords) -> Self {
+        let mut stops = Self::default();
+        for entry in list.words() {
+            let mut parts = Vec::new();
+            analyzer.analyze_words(entry, |word, term| {
+                parts.push((word.to_owned(), term.to_owned()))
+            });
+            if let [(word, term)] = parts.as_slice() {
+                stops.words.insert(word.clone());
+                stops.terms.insert(term.clone());
+            }
+        }
+        stops
+    }
+}
+
 /// A consistent view of the index at one commit.
 pub struct Reader {
     analyzer: Analyzer,
+    stops: Stops,
     first_letter_typos: bool,
     segments: Vec<(Segment, Option<Vec<u64>>)>,
     collections: Vec<Collection>,
@@ -531,13 +608,35 @@ impl Reader {
     }
 
     fn corrected_terms(&self, text: &str) -> Vec<(String, f32)> {
+        self.query_terms(text, true)
+    }
+
+    /// Weighted terms of a query, without stop words and corrections to them unless that is all.
+    fn query_terms(&self, text: &str, typos: bool) -> Vec<(String, f32)> {
+        let (mut kept, mut all) = (Vec::new(), Vec::new());
+        self.analyzer.analyze_words(text, |word, term| {
+            let spellings = if typos {
+                self.spellings(term)
+            } else {
+                vec![(term.to_owned(), 1.0)]
+            };
+            if !self.stops.words.contains(word) {
+                kept.extend(
+                    spellings
+                        .iter()
+                        .filter(|(s, _)| s == term || !self.stops.terms.contains(s))
+                        .cloned(),
+                );
+            }
+            all.extend(spellings);
+        });
+        let chosen = if kept.is_empty() { all } else { kept };
         let mut weights: Vec<(String, f32)> = Vec::new();
-        for term in self.analyzer.terms(text) {
-            for (word, weight) in self.spellings(&term) {
-                match weights.iter_mut().find(|w| w.0 == word) {
-                    Some(w) => w.1 = w.1.max(weight),
-                    None => weights.push((word, weight)),
-                }
+        for (word, weight) in chosen {
+            match weights.iter_mut().find(|w| w.0 == word) {
+                Some(w) if typos => w.1 = w.1.max(weight),
+                Some(w) => w.1 += weight,
+                None => weights.push((word, weight)),
             }
         }
         weights
@@ -550,14 +649,7 @@ impl Reader {
     }
 
     fn exact_terms(&self, text: &str) -> Vec<(String, f32)> {
-        let mut weights: Vec<(String, f32)> = Vec::new();
-        self.analyzer.analyze(text, |term| {
-            match weights.iter_mut().find(|w| w.0 == term) {
-                Some(w) => w.1 += 1.0,
-                None => weights.push((term.to_owned(), 1.0)),
-            }
-        });
-        weights
+        self.query_terms(text, false)
     }
 
     /// The best documents for a query over named fields with boosts, within its filter.

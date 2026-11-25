@@ -12,6 +12,7 @@ publish = false
 
 [dependencies]
 fst = "0.4"
+frostem = { version = "2.20261016", default-features = false, features = ["arabic", "armenian", "basque", "catalan", "czech", "danish", "dutch", "english", "esperanto", "estonian", "finnish", "french", "german", "greek", "hindi", "hungarian", "indonesian", "irish", "italian", "lithuanian", "nepali", "norwegian", "persian", "polish", "portuguese", "romanian", "russian", "serbian", "sesotho", "spanish", "swedish", "tamil", "turkish", "ukrainian", "yiddish"] }
 memmap2 = "0.9"
 rustc-hash = "2"
 rayon = "1.10"
