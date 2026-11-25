@@ -1,0 +1,20 @@
+[package]
+name = "completype-fts"
+description = "Full-text search with exact BM25 top-k over compressed, memory-mapped segments"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+fst = "0.4"
+memmap2 = "0.9"
+rustc-hash = "2"
+rayon = "1.10"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
