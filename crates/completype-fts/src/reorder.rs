@@ -65,13 +65,19 @@ fn bisect(forward: &Forward, docs: &mut [u32], log2: &[f32]) {
     if docs.len() <= LEAF {
         return;
     }
-    DEGREES.with_borrow_mut(|(left, right)| {
-        if left.len() < forward.term_count {
-            left.resize(forward.term_count, 0);
-            right.resize(forward.term_count, 0);
-        }
-        partition(forward, docs, left, right, log2);
-    });
+    if docs.len() >= 2 * PARALLEL_FROM {
+        // Parallel work may run other bisections on this thread, so it cannot hold the shared buffers.
+        let (mut left, mut right) = (vec![0; forward.term_count], vec![0; forward.term_count]);
+        partition(forward, docs, &mut left, &mut right, log2, true);
+    } else {
+        DEGREES.with_borrow_mut(|(left, right)| {
+            if left.len() < forward.term_count {
+                left.resize(forward.term_count, 0);
+                right.resize(forward.term_count, 0);
+            }
+            partition(forward, docs, left, right, log2, false);
+        });
+    }
     let (a, b) = docs.split_at_mut(docs.len() / 2);
     if a.len() > 4096 {
         rayon::join(|| bisect(forward, a, log2), || bisect(forward, b, log2));
@@ -87,6 +93,7 @@ fn partition(
     left: &mut [u32],
     right: &mut [u32],
     log2: &[f32],
+    parallel: bool,
 ) {
     let mid = docs.len() / 2;
     let (n1, n2) = (log2[mid], log2[docs.len() - mid]);
@@ -113,34 +120,47 @@ fn partition(
                 .for_each(|&t| right[t as usize] += 1);
         }
         let (left, right) = (&*left, &*right);
+        let move_a = |&d: &u32| {
+            let gain = forward.terms(d).iter().map(|&t| {
+                let (l, r) = (left[t as usize], right[t as usize]);
+                cost(l, r) - cost(l - 1, r + 1)
+            });
+            (gain.sum::<f32>(), d)
+        };
+        let move_b = |&d: &u32| {
+            let gain = forward.terms(d).iter().map(|&t| {
+                let (l, r) = (left[t as usize], right[t as usize]);
+                cost(l, r) - cost(l + 1, r - 1)
+            });
+            (gain.sum::<f32>(), d)
+        };
         gains_a.clear();
-        gains_a.par_extend(
-            docs[..mid]
-                .par_iter()
-                .with_min_len(PARALLEL_FROM)
-                .map(|&d| {
-                    let gain = forward.terms(d).iter().map(|&t| {
-                        let (l, r) = (left[t as usize], right[t as usize]);
-                        cost(l, r) - cost(l - 1, r + 1)
-                    });
-                    (gain.sum(), d)
-                }),
-        );
         gains_b.clear();
-        gains_b.par_extend(
-            docs[mid..]
-                .par_iter()
-                .with_min_len(PARALLEL_FROM)
-                .map(|&d| {
-                    let gain = forward.terms(d).iter().map(|&t| {
-                        let (l, r) = (left[t as usize], right[t as usize]);
-                        cost(l, r) - cost(l + 1, r - 1)
-                    });
-                    (gain.sum(), d)
-                }),
-        );
-        gains_a.par_sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
-        gains_b.par_sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
+        if parallel {
+            gains_a.par_extend(
+                docs[..mid]
+                    .par_iter()
+                    .with_min_len(PARALLEL_FROM)
+                    .map(move_a),
+            );
+            gains_b.par_extend(
+                docs[mid..]
+                    .par_iter()
+                    .with_min_len(PARALLEL_FROM)
+                    .map(move_b),
+            );
+        } else {
+            gains_a.extend(docs[..mid].iter().map(move_a));
+            gains_b.extend(docs[mid..].iter().map(move_b));
+        }
+        let order = |x: &(f32, u32), y: &(f32, u32)| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1));
+        if parallel {
+            gains_a.par_sort_unstable_by(order);
+            gains_b.par_sort_unstable_by(order);
+        } else {
+            gains_a.sort_unstable_by(order);
+            gains_b.sort_unstable_by(order);
+        }
         let swaps = gains_a
             .iter()
             .zip(&gains_b)

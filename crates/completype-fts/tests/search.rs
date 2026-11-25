@@ -155,3 +155,33 @@ fn huge_term_frequencies_are_capped_consistently() {
     let pruned = searcher.search([("spam", 1.0)], 3);
     assert_eq!(pruned, searcher.search_exhaustive([("spam", 1.0)], 3));
 }
+
+#[test]
+fn reordering_a_corpus_large_enough_to_run_in_parallel_keeps_every_document() {
+    let mut builder = SegmentBuilder::default();
+    builder.reorder(true);
+    let docs = 80_000;
+    for d in 0..docs {
+        builder.add(
+            format!("d{d}"),
+            [
+                format!("a{}", d % 97),
+                format!("b{}", d % 389),
+                "all".to_owned(),
+            ]
+            .iter()
+            .map(String::as_str),
+        );
+    }
+    let segment = Segment::from_bytes(builder.finish()).unwrap();
+    let mut seen: Vec<bool> = vec![false; docs];
+    for doc in 0..segment.len() as u32 {
+        seen[segment.id(doc)[1..].parse::<usize>().unwrap()] = true;
+    }
+    assert!(seen.iter().all(|&s| s));
+    let mut searcher = Searcher::new(&segment);
+    assert_eq!(
+        searcher.search([("a5", 1.0), ("b7", 1.0)], 50),
+        searcher.search_exhaustive([("a5", 1.0), ("b7", 1.0)], 50)
+    );
+}
