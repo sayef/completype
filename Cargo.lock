@@ -738,6 +738,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-credential-types",
+ "completype-vector",
  "criterion",
  "fsst-rs",
  "fst",
@@ -794,6 +795,13 @@ dependencies = [
  "pyo3",
  "pyo3-log",
  "tracing",
+]
+
+[[package]]
+name = "completype-vector"
+version = "0.2.3"
+dependencies = [
+ "turbovec",
 ]
 
 [[package]]

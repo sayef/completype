@@ -1,0 +1,16 @@
+[package]
+name = "completype-vector"
+description = "Quantised vector encoding and nearest-neighbour search under a mask, used by completype"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/completype-vector"
+keywords = ["vector", "quantization", "nearest-neighbor", "embeddings", "search"]
+categories = ["algorithms", "data-structures"]
+
+[dependencies]
+turbovec = "1.0.0"

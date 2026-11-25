@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/completype", "crates/completype-cli", "crates/completype-py", "crates/completype-fts"]
+members = ["crates/completype", "crates/completype-cli", "crates/completype-py", "crates/completype-fts", "crates/completype-vector"]
 
 [workspace.package]
 version = "0.2.3"
