@@ -1,0 +1,117 @@
+# in-process, all corpora
+
+## scifact
+5183 documents, 256 queries, 4 passes per k
+new: build 0.2 s, segment 1.8 MiB
+  1.7 MiB without ids
+bp: build 0.6 s, segment 1.7 MiB, 1.6 MiB without ids
+tantivy: build+merge 1.1 s, 1 segment(s), index 1.4 MiB
+process RSS after building everything: 41 MiB (start 11)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 61.3 | 151.2 | 190.7 |
+| 10 | completype-fts reordered | 52.6 | 137.7 | 187.3 |
+| 10 | tantivy 0.27 | 162.5 | 546.0 | 768.0 |
+| 100 | completype-fts | 108.8 | 204.3 | 264.0 |
+| 100 | completype-fts reordered | 97.5 | 185.7 | 247.7 |
+| 100 | tantivy 0.27 | 329.0 | 848.0 | 1254.3 |
+
+## nfcorpus
+3633 documents, 256 queries, 4 passes per k
+new: build 0.1 s, segment 1.3 MiB
+  1.2 MiB without ids
+bp: build 0.4 s, segment 1.2 MiB, 1.2 MiB without ids
+tantivy: build+merge 0.8 s, 1 segment(s), index 1.0 MiB
+process RSS after building everything: 33 MiB (start 9)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 11.0 | 38.0 | 46.1 |
+| 10 | completype-fts reordered | 11.1 | 36.4 | 46.5 |
+| 10 | tantivy 0.27 | 17.7 | 94.5 | 122.8 |
+| 100 | completype-fts | 29.1 | 75.7 | 87.7 |
+| 100 | completype-fts reordered | 29.4 | 72.5 | 87.2 |
+| 100 | tantivy 0.27 | 43.0 | 197.5 | 232.5 |
+
+## fiqa
+57638 documents, 256 queries, 4 passes per k
+new: build 1.1 s, segment 10.3 MiB
+  9.5 MiB without ids
+bp: build 4.3 s, segment 9.5 MiB, 8.7 MiB without ids
+tantivy: build+merge 1.9 s, 1 segment(s), index 8.0 MiB
+process RSS after building everything: 170 MiB (start 50)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 469.6 | 1272.3 | 1527.5 |
+| 10 | completype-fts reordered | 373.9 | 1167.5 | 1414.6 |
+| 10 | tantivy 0.27 | 1053.7 | 3804.1 | 5518.7 |
+| 100 | completype-fts | 674.9 | 1562.9 | 1900.5 |
+| 100 | completype-fts reordered | 572.8 | 1447.8 | 1797.2 |
+| 100 | tantivy 0.27 | 1824.1 | 5862.9 | 8062.4 |
+
+## trec-covid
+171332 documents, 50 queries, 4 passes per k
+new: build 4.3 s, segment 38.0 MiB
+  35.4 MiB without ids
+bp: build 16.1 s, segment 33.2 MiB, 30.6 MiB without ids
+tantivy: build+merge 5.2 s, 1 segment(s), index 27.1 MiB
+process RSS after building everything: 495 MiB (start 198)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 1365.6 | 2816.7 | 4974.3 |
+| 10 | completype-fts reordered | 910.6 | 2140.6 | 3682.8 |
+| 10 | tantivy 0.27 | 2598.7 | 6204.0 | 14437.8 |
+| 100 | completype-fts | 1919.5 | 3696.1 | 6048.5 |
+| 100 | completype-fts reordered | 1352.7 | 2869.3 | 4545.1 |
+| 100 | tantivy 0.27 | 4760.8 | 10217.2 | 24108.0 |
+
+## quora
+522931 documents, 256 queries, 4 passes per k
+new: build 1.5 s, segment 21.7 MiB
+  14.9 MiB without ids
+bp: build 12.5 s, segment 19.3 MiB, 12.4 MiB without ids
+tantivy: build+merge 2.4 s, 1 segment(s), index 12.3 MiB
+process RSS after building everything: 212 MiB (start 81)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 756.9 | 4318.2 | 7635.8 |
+| 10 | completype-fts reordered | 417.4 | 2329.1 | 4832.8 |
+| 10 | tantivy 0.27 | 1186.2 | 8903.1 | 16170.8 |
+| 100 | completype-fts | 1805.5 | 4910.8 | 8474.8 |
+| 100 | completype-fts reordered | 883.1 | 3555.0 | 6119.4 |
+| 100 | tantivy 0.27 | 3085.4 | 15474.0 | 24415.6 |
+
+## dbpedia-entity
+4635922 documents, 256 queries, 4 passes per k
+new: build 65.4 s, segment 605.6 MiB
+  438.2 MiB without ids
+bp: build 429.1 s, segment 536.9 MiB, 369.4 MiB without ids
+tantivy: build+merge 72.4 s, 1 segment(s), index 324.0 MiB
+process RSS after building everything: 3905 MiB (start 1825)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 2910.0 | 16635.8 | 26681.7 |
+| 10 | completype-fts reordered | 1875.3 | 7280.3 | 13557.8 |
+| 10 | tantivy 0.27 | 2190.8 | 17116.9 | 32063.5 |
+| 100 | completype-fts | 4548.6 | 22202.8 | 35345.7 |
+| 100 | completype-fts reordered | 2469.7 | 10875.0 | 19855.9 |
+| 100 | tantivy 0.27 | 3959.9 | 25380.0 | 51026.5 |
+
+# in-process, nq
+
+## nq
+2681468 documents, 256 queries, 4 passes per k
+new: build 42.3 s, segment 345.9 MiB
+  301.0 MiB without ids
+bp: build 278.1 s, segment 324.4 MiB, 279.4 MiB without ids
+tantivy: build+merge 57.2 s, 1 segment(s), index 263.3 MiB
+process RSS after building everything: 3638 MiB (start 1477)
+slowest k=10: µs, headers, touched, scored, (bp µs, touched, scored), terms, postings, scan µs, score µs
+median-ish: (5042, 107012, 20945, 1741, Some((3875, 20916, 1985)), 8, 33794, 2670, 2318)
+| k | engine | p50 µs | p95 µs | p99 µs |
+|---:|---|---:|---:|---:|
+| 10 | completype-fts | 4183.7 | 16811.2 | 30314.1 |
+| 10 | completype-fts reordered | 3205.5 | 12057.5 | 21407.0 |
+| 10 | tantivy 0.27 | 5344.6 | 17271.6 | 31817.6 |
+| 100 | completype-fts | 7723.2 | 21678.6 | 37125.6 |
+| 100 | completype-fts reordered | 6164.7 | 16639.3 | 29032.9 |
+| 100 | tantivy 0.27 | 10252.6 | 27128.1 | 49691.6 |

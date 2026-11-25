@@ -1,0 +1,16 @@
+[package]
+name = "completype-fts-latency-v2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+completype-fts = { path = "../../../crates/completype-fts" }
+completype-fts-poc = { package = "completype-fts", path = "../rust" }
+tantivy = { version = "=0.27.0", default-features = false, features = ["mmap"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[workspace]
