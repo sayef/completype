@@ -12,6 +12,6 @@ mod segment;
 
 pub use analyzer::Analyzer;
 pub use build::SegmentBuilder;
-pub use index::{Index, Reader, SearchHit, Writer};
+pub use index::{Index, Reader, Reordering, SearchHit, Writer};
 pub use search::{Hit, Searcher, Stats};
 pub use segment::Segment;

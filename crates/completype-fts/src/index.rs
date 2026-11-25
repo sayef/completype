@@ -24,8 +24,18 @@ const MORE_COMMON: u64 = 50;
 pub struct Index {
     dir: PathBuf,
     analyzer: Analyzer,
-    reorder: bool,
+    reorder: Reordering,
     first_letter_typos: bool,
+}
+
+/// When segments are written with similar documents placed together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Reordering {
+    Never,
+    /// Commits stay quick; merged segments, which hold most documents over time, are reordered.
+    #[default]
+    OnMerge,
+    Always,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,7 +133,7 @@ impl Index {
         Ok(Self {
             dir,
             analyzer: Analyzer::default(),
-            reorder: false,
+            reorder: Reordering::OnMerge,
             first_letter_typos: false,
         })
     }
@@ -133,9 +143,9 @@ impl Index {
         self
     }
 
-    /// Reorders documents in every segment written: smaller and faster, slower to build.
-    pub fn with_reordering(mut self, on: bool) -> Self {
-        self.reorder = on;
+    /// Which segments place similar documents together: smaller and faster, slower to write.
+    pub fn with_reordering(mut self, reordering: Reordering) -> Self {
+        self.reorder = reordering;
         self
     }
 
@@ -167,15 +177,19 @@ impl Index {
         Ok(Writer {
             index: self.clone(),
             lock,
-            builder: self.new_builder(),
+            builder: self.new_builder(false),
             buffered: FxHashMap::default(),
             deletes: FxHashSet::default(),
         })
     }
 
-    fn new_builder(&self) -> SegmentBuilder {
+    fn new_builder(&self, merging: bool) -> SegmentBuilder {
         let mut builder = SegmentBuilder::default();
-        builder.reorder(self.reorder);
+        builder.reorder(match self.reorder {
+            Reordering::Never => false,
+            Reordering::OnMerge => merging,
+            Reordering::Always => true,
+        });
         builder
     }
 
@@ -272,7 +286,7 @@ impl Writer {
             entry.deletes = Some(generation);
         }
         if self.builder.live() > 0 {
-            let builder = std::mem::replace(&mut self.builder, self.index.new_builder());
+            let builder = std::mem::replace(&mut self.builder, self.index.new_builder(false));
             let number = entries.iter().map(|e| e.number + 1).max().unwrap_or(1);
             write_atomic(&dir.join(segment_file(number)), &builder.finish())?;
             let entry = Entry {
@@ -324,7 +338,7 @@ impl Writer {
                 read_deletes(&dir, entry)?,
             ));
         }
-        let bytes = merge_segments(&sources, self.index.new_builder());
+        let bytes = merge_segments(&sources, self.index.new_builder(true));
         let number = entries.iter().map(|e| e.number + 1).max().unwrap_or(1);
         write_atomic(&dir.join(segment_file(number)), &bytes)?;
         let mut kept: Vec<Entry> = entries

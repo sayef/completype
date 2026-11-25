@@ -1,4 +1,4 @@
-use completype_fts::{Index, SearchHit};
+use completype_fts::{Index, Reordering, SearchHit};
 
 fn temp(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("completype-fts-{name}-{}", std::process::id()));
@@ -61,13 +61,13 @@ fn merging_keeps_live_documents_and_their_scores() {
     let before = index.reader().unwrap();
     assert_eq!(before.segment_count(), 4);
     let queries = ["rare common", "word3 batch2", "word16 rare batch0"];
-    let expected: Vec<_> = queries.iter().map(|q| before.search(q, 50)).collect();
+    let expected: Vec<_> = queries.iter().map(|q| before.search(q, 10_000)).collect();
     writer.merge().unwrap();
     let after = index.reader().unwrap();
     assert_eq!(after.segment_count(), 1);
     assert_eq!(after.len(), before.len());
     for (q, want) in queries.iter().zip(expected) {
-        let got = after.search(q, 50);
+        let got = after.search(q, 10_000);
         let mut a: Vec<_> = got.iter().map(|h| (h.id.clone(), h.score)).collect();
         let mut b: Vec<_> = want.iter().map(|h| (h.id.clone(), h.score)).collect();
         a.sort_by(|x, y| x.0.cmp(&y.0));
@@ -86,8 +86,12 @@ fn merging_keeps_live_documents_and_their_scores() {
 fn many_commits_merge_automatically_and_reordering_changes_no_results() {
     let dir = temp("auto");
     let plain_dir = temp("auto-plain");
-    let index = Index::open(&dir).unwrap().with_reordering(true);
-    let plain = Index::open(&plain_dir).unwrap();
+    let index = Index::open(&dir)
+        .unwrap()
+        .with_reordering(Reordering::Always);
+    let plain = Index::open(&plain_dir)
+        .unwrap()
+        .with_reordering(Reordering::Never);
     let (mut w, mut p) = (index.writer().unwrap(), plain.writer().unwrap());
     for c in 0..14 {
         for d in 0..200 {
