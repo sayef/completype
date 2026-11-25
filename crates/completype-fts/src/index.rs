@@ -196,7 +196,7 @@ impl Index {
     }
 
     /// Keeps token positions for phrases, fixed at the first commit like the analyzer. Off by
-    /// default: segments grow by a third on short texts and up to double on long ones.
+    /// default: segments grow by about half on short texts and double on long ones.
     pub fn with_positions(mut self, on: bool) -> Self {
         self.positions = on;
         self
