@@ -780,6 +780,7 @@ dependencies = [
  "rayon",
  "rustc-hash",
  "unicode-normalization",
+ "zstd",
 ]
 
 [[package]]

@@ -16,5 +16,6 @@ memmap2 = "0.9"
 rustc-hash = "2"
 rayon = "1.10"
 unicode-normalization = "0.1"
+zstd = "0.14"
 
 [dev-dependencies]

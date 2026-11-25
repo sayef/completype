@@ -3,41 +3,149 @@ use std::path::Path;
 
 use rustc_hash::FxHashMap;
 
+use crate::document::{Document, Number, DEFAULT_FIELD};
 use crate::format::*;
-use crate::{norm, reorder};
+use crate::{norm, reorder, stored, Analyzer};
 
-/// Collects documents as token streams and writes them as one immutable segment.
+type Postings = FxHashMap<Box<str>, Vec<(u32, u32)>>;
+/// A term, its field and its postings there.
+type FieldTerm<'a> = (&'a str, u8, &'a [(u32, u32)]);
+
+#[derive(Default)]
+struct TextField {
+    name: String,
+    /// Tokens per document; documents past the end have none.
+    lengths: Vec<u32>,
+    postings: Postings,
+}
+
+#[derive(Default)]
+struct KeywordField {
+    name: String,
+    docs: FxHashMap<Box<str>, Vec<u32>>,
+}
+
+#[derive(Default)]
+struct NumericField {
+    name: String,
+    values: Vec<(Number, u32)>,
+}
+
+/// Collects documents and writes them as one immutable segment.
 #[derive(Default)]
 pub struct SegmentBuilder {
     ids: Vec<String>,
-    lengths: Vec<u32>,
-    postings: FxHashMap<Box<str>, Vec<(u32, u32)>>,
+    text: Vec<TextField>,
+    keywords: Vec<KeywordField>,
+    numbers: Vec<NumericField>,
+    stored: Vec<Option<Box<[u8]>>>,
     counts: FxHashMap<String, u32>,
     reorder: bool,
     dropped: Vec<u32>,
 }
 
+fn field_index<T>(
+    fields: &mut Vec<T>,
+    name: &str,
+    of: impl Fn(&T) -> &str,
+    new: impl Fn() -> T,
+) -> usize {
+    if let Some(i) = fields.iter().position(|f| of(f) == name) {
+        return i;
+    }
+    assert!(
+        fields.len() < 255,
+        "a segment holds at most 255 fields of a kind"
+    );
+    fields.push(new());
+    fields.len() - 1
+}
+
+/// Moves `items[old]` to `new_of[old]`, leaving out those mapped to `u32::MAX`.
+fn permute<T: Default>(items: Vec<T>, new_of: &[u32], count: usize) -> Vec<T> {
+    let mut out: Vec<T> = (0..count).map(|_| T::default()).collect();
+    for (old, item) in items.into_iter().enumerate() {
+        let new = new_of[old];
+        if new != u32::MAX {
+            out[new as usize] = item;
+        }
+    }
+    out
+}
+
 impl SegmentBuilder {
+    /// Adds a document whose default field holds `tokens`.
     pub fn add<'a>(&mut self, id: impl Into<String>, tokens: impl IntoIterator<Item = &'a str>) {
-        let doc =
-            u32::try_from(self.ids.len()).expect("a segment holds at most u32::MAX documents");
-        self.ids.push(id.into());
+        let doc = self.push_document(id.into());
+        let field = self.text_field(DEFAULT_FIELD);
         let mut length = 0_u32;
         for token in tokens {
             length = length.saturating_add(1);
-            match self.counts.get_mut(token) {
-                Some(n) => *n += 1,
-                None => {
-                    self.counts.insert(token.to_owned(), 1);
-                }
+            self.count(token);
+        }
+        self.flush(field, doc, length);
+    }
+
+    /// Adds a document, analysing its text fields with `analyzer`.
+    pub fn add_document(
+        &mut self,
+        id: impl Into<String>,
+        document: &Document,
+        analyzer: &Analyzer,
+    ) {
+        let doc = self.push_document(id.into());
+        for (i, (name, _)) in document.text.iter().enumerate() {
+            if document.text[..i].iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            let field = self.text_field(name);
+            let mut length = 0_u32;
+            for (_, text) in document.text[i..].iter().filter(|(n, _)| n == name) {
+                analyzer.analyze(text, |token| {
+                    length = length.saturating_add(1);
+                    match self.counts.get_mut(token) {
+                        Some(n) => *n += 1,
+                        None => {
+                            self.counts.insert(token.to_owned(), 1);
+                        }
+                    }
+                });
+            }
+            self.flush(field, doc, length);
+        }
+        for (name, value) in &document.keywords {
+            self.push_keyword(name, value, doc);
+        }
+        for &(ref name, value) in &document.numbers {
+            self.push_number(name, value, doc);
+        }
+        if let Some(payload) = &document.stored {
+            self.set_stored(doc, payload.as_slice().into());
+        }
+    }
+
+    fn count(&mut self, token: &str) {
+        match self.counts.get_mut(token) {
+            Some(n) => *n += 1,
+            None => {
+                self.counts.insert(token.to_owned(), 1);
             }
         }
-        self.lengths.push(length);
+    }
+
+    fn flush(&mut self, field: usize, doc: u32, length: u32) {
+        let field = &mut self.text[field];
+        if length > 0 {
+            field.lengths.resize(doc as usize, 0);
+            field.lengths.push(length);
+        }
         for (term, tf) in self.counts.drain() {
-            match self.postings.get_mut(term.as_str()) {
+            match field.postings.get_mut(term.as_str()) {
                 Some(list) => list.push((doc, tf)),
                 None => {
-                    self.postings.insert(term.into_boxed_str(), vec![(doc, tf)]);
+                    field
+                        .postings
+                        .insert(term.into_boxed_str(), vec![(doc, tf)]);
                 }
             }
         }
@@ -59,16 +167,79 @@ impl SegmentBuilder {
         self.ids.len() - self.dropped.len()
     }
 
-    /// Appends a document known only by its id and length, for merging.
-    pub(crate) fn push_document(&mut self, id: String, length: u32) -> u32 {
+    /// Appends a document with no fields yet, for merging.
+    pub(crate) fn push_document(&mut self, id: String) -> u32 {
+        let doc =
+            u32::try_from(self.ids.len()).expect("a segment holds at most u32::MAX documents");
         self.ids.push(id);
-        self.lengths.push(length);
-        (self.ids.len() - 1) as u32
+        doc
     }
 
-    /// Sets a term's whole postings list, in document order, for merging.
-    pub(crate) fn set_postings(&mut self, term: &str, list: Vec<(u32, u32)>) {
-        self.postings.insert(term.into(), list);
+    pub(crate) fn text_field(&mut self, name: &str) -> usize {
+        field_index(
+            &mut self.text,
+            name,
+            |f| &f.name,
+            || TextField {
+                name: name.to_owned(),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Sets a field's token count for every document, for merging.
+    pub(crate) fn set_lengths(&mut self, field: usize, lengths: Vec<u32>) {
+        self.text[field].lengths = lengths;
+    }
+
+    /// Sets a term's whole postings list in a field, in document order, for merging.
+    pub(crate) fn set_postings(&mut self, field: usize, term: &str, list: Vec<(u32, u32)>) {
+        self.text[field].postings.insert(term.into(), list);
+    }
+
+    pub(crate) fn push_keyword(&mut self, field: &str, value: &str, doc: u32) {
+        let f = field_index(
+            &mut self.keywords,
+            field,
+            |f| &f.name,
+            || KeywordField {
+                name: field.to_owned(),
+                ..Default::default()
+            },
+        );
+        let docs = &mut self.keywords[f].docs;
+        match docs.get_mut(value) {
+            Some(list) if list.last() == Some(&doc) => {}
+            Some(list) => list.push(doc),
+            None => {
+                docs.insert(value.into(), vec![doc]);
+            }
+        }
+    }
+
+    pub(crate) fn push_number(&mut self, field: &str, value: Number, doc: u32) {
+        let value = match value {
+            Number::Float(v) if v.is_nan() => return,
+            Number::Float(v) => Number::Float(v + 0.0),
+            v => v,
+        };
+        let f = field_index(
+            &mut self.numbers,
+            field,
+            |f| &f.name,
+            || NumericField {
+                name: field.to_owned(),
+                ..Default::default()
+            },
+        );
+        self.numbers[f].values.push((value, doc));
+    }
+
+    pub(crate) fn set_stored(&mut self, doc: u32, payload: Box<[u8]>) {
+        if self.stored.len() <= doc as usize {
+            self.stored.resize(doc as usize + 1, None);
+        }
+        self.stored[doc as usize] = Some(payload);
     }
 
     pub fn len(&self) -> usize {
@@ -77,6 +248,36 @@ impl SegmentBuilder {
 
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+
+    /// Moves every document to `new_of[doc]`, dropping those mapped to `u32::MAX`.
+    fn renumber(&mut self, new_of: &[u32], count: usize) {
+        let map = |d: &mut u32| {
+            *d = new_of[*d as usize];
+            *d != u32::MAX
+        };
+        self.ids = permute(std::mem::take(&mut self.ids), new_of, count);
+        for field in &mut self.text {
+            field.lengths = permute(std::mem::take(&mut field.lengths), new_of, count);
+            field.postings.retain(|_, list| {
+                list.retain_mut(|p| map(&mut p.0));
+                list.sort_unstable_by_key(|p| p.0);
+                !list.is_empty()
+            });
+        }
+        for field in &mut self.keywords {
+            field.docs.retain(|_, list| {
+                list.retain_mut(map);
+                list.sort_unstable();
+                !list.is_empty()
+            });
+        }
+        for field in &mut self.numbers {
+            field.values.retain_mut(|v| map(&mut v.1));
+        }
+        if !self.stored.is_empty() {
+            self.stored = permute(std::mem::take(&mut self.stored), new_of, count);
+        }
     }
 
     fn remove_dropped(&mut self) {
@@ -92,17 +293,7 @@ impl SegmentBuilder {
                 next += 1;
             }
         }
-        let mut doc = 0;
-        self.ids.retain(|_| (keep[doc], doc += 1).0);
-        let mut doc = 0;
-        self.lengths.retain(|_| (keep[doc], doc += 1).0);
-        self.postings.retain(|_, list| {
-            list.retain_mut(|p| {
-                p.0 = new_of[p.0 as usize];
-                p.0 != u32::MAX
-            });
-            !list.is_empty()
-        });
+        self.renumber(&new_of, next as usize);
     }
 
     pub fn write(self, path: impl AsRef<Path>) -> io::Result<()> {
@@ -116,38 +307,45 @@ impl SegmentBuilder {
         }
         let docs = self.ids.len();
         if self.reorder && docs > WINDOW {
-            let forward = reorder::Forward::new(docs, self.postings.values().map(Vec::as_slice));
+            let lists = self
+                .text
+                .iter()
+                .flat_map(|f| f.postings.values().map(Vec::as_slice));
+            let forward = reorder::Forward::new(docs, lists);
             let order = reorder::order(&forward, docs);
             drop(forward);
             let mut new_of = vec![0_u32; docs];
             for (new, &old) in order.iter().enumerate() {
                 new_of[old as usize] = new as u32;
             }
-            let mut ids = std::mem::take(&mut self.ids);
-            self.ids = order
-                .iter()
-                .map(|&old| std::mem::take(&mut ids[old as usize]))
-                .collect();
-            self.lengths = order
-                .iter()
-                .map(|&old| self.lengths[old as usize])
-                .collect();
-            for list in self.postings.values_mut() {
-                list.iter_mut().for_each(|p| p.0 = new_of[p.0 as usize]);
-                list.sort_unstable_by_key(|p| p.0);
-            }
+            self.renumber(&new_of, docs);
         }
-        let total: u64 = self.lengths.iter().map(|&l| u64::from(l)).sum();
-        let norms: Vec<u8> = self.lengths.iter().map(|&l| norm::encode(l)).collect();
-        let average = if docs == 0 {
-            1.0
-        } else {
-            (total as f64 / docs as f64).max(f64::MIN_POSITIVE)
-        };
-        let lengths: [f64; 256] = std::array::from_fn(|n| {
-            f64::from(K1)
-                * (1.0 - f64::from(B) + f64::from(B) * f64::from(norm::decode(n as u8)) / average)
-        });
+
+        let mut fields = Vec::new();
+        let mut norms = Vec::with_capacity(self.text.len() * docs);
+        let mut length_tables = Vec::with_capacity(self.text.len());
+        let mut total = 0_u64;
+        write_varint(&mut fields, self.text.len() as u32);
+        for field in &mut self.text {
+            field.lengths.resize(docs, 0);
+            let tokens: u64 = field.lengths.iter().map(|&l| u64::from(l)).sum();
+            let with = field.lengths.iter().filter(|&&l| l > 0).count();
+            total += tokens;
+            write_str(&mut fields, &field.name);
+            write_varint(&mut fields, with as u32);
+            write_varint64(&mut fields, tokens);
+            norms.extend(field.lengths.iter().map(|&l| norm::encode(l)));
+            let average = if with == 0 {
+                1.0
+            } else {
+                (tokens as f64 / with as f64).max(f64::MIN_POSITIVE)
+            };
+            length_tables.push(std::array::from_fn::<f64, 256, _>(|n| {
+                f64::from(K1)
+                    * (1.0 - f64::from(B)
+                        + f64::from(B) * f64::from(norm::decode(n as u8)) / average)
+            }));
+        }
 
         let mut id_offsets = Vec::with_capacity((docs + 1) * 8);
         let mut id_bytes = Vec::new();
@@ -157,16 +355,32 @@ impl SegmentBuilder {
         }
         id_offsets.extend_from_slice(&(id_bytes.len() as u64).to_le_bytes());
 
-        let mut terms: Vec<_> = self.postings.into_iter().collect();
-        terms.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut terms: Vec<FieldTerm> = self
+            .text
+            .iter()
+            .enumerate()
+            .flat_map(|(f, field)| {
+                field
+                    .postings
+                    .iter()
+                    .map(move |(t, l)| (&**t, f as u8, l.as_slice()))
+            })
+            .collect();
+        terms.sort_unstable_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(&b.1)));
+        let mut term_count = 0_u32;
         let mut table = Vec::new();
         let mut headers = Vec::new();
         let mut bodies = Vec::new();
         let mut dictionary = fst::MapBuilder::memory();
         let mut window = Vec::with_capacity(WINDOW);
-        for (term, list) in &terms {
-            if let [(doc, tf)] = list[..] {
-                let value = INLINE | u64::from(tf.min(MAX_TF)) << 32 | u64::from(doc);
+        for group in terms.chunk_by(|a, b| a.0 == b.0) {
+            term_count += 1;
+            let term = group[0].0;
+            if let [(_, field, [(doc, tf)])] = group {
+                let value = INLINE
+                    | u64::from(*field) << INLINE_FIELD_SHIFT
+                    | u64::from((*tf).min(MAX_TF)) << 32
+                    | u64::from(*doc);
                 dictionary
                     .insert(term.as_bytes(), value)
                     .expect("sorted unique terms");
@@ -175,37 +389,44 @@ impl SegmentBuilder {
             dictionary
                 .insert(term.as_bytes(), table.len() as u64)
                 .expect("sorted unique terms");
-            write_varint64(&mut table, headers.len() as u64);
-            write_varint64(&mut table, bodies.len() as u64);
-            write_varint(&mut table, list.len() as u32);
-            let mut windows = 0_u32;
-            let mut previous = None;
-            for chunk in list.chunk_by(|a, b| a.0 as usize / WINDOW == b.0 as usize / WINDOW) {
-                let id = chunk[0].0 / WINDOW as u32;
-                windows += 1;
-                window.clear();
-                window.extend(
-                    chunk
+            write_varint(&mut table, group.len() as u32);
+            for &(_, field, list) in group {
+                let f = usize::from(field);
+                let field_norms = &norms[f * docs..(f + 1) * docs];
+                let lengths = &length_tables[f];
+                write_varint(&mut table, u32::from(field));
+                write_varint64(&mut table, headers.len() as u64);
+                write_varint64(&mut table, bodies.len() as u64);
+                write_varint(&mut table, list.len() as u32);
+                let mut windows = 0_u32;
+                let mut previous = None;
+                for chunk in list.chunk_by(|a, b| a.0 as usize / WINDOW == b.0 as usize / WINDOW) {
+                    let id = chunk[0].0 / WINDOW as u32;
+                    windows += 1;
+                    window.clear();
+                    window.extend(
+                        chunk
+                            .iter()
+                            .map(|&(doc, tf)| ((doc as usize % WINDOW) as u8, tf.min(MAX_TF))),
+                    );
+                    let saturation = chunk
                         .iter()
-                        .map(|&(doc, tf)| ((doc as usize % WINDOW) as u8, tf.min(MAX_TF))),
-                );
-                let saturation = chunk
-                    .iter()
-                    .map(|&(doc, tf)| {
-                        let tf = f64::from(tf.min(MAX_TF));
-                        tf / (tf + lengths[usize::from(norms[doc as usize])])
-                    })
-                    .fold(0.0, f64::max);
-                write_window(
-                    &mut headers,
-                    &mut bodies,
-                    previous.map_or(id, |p| id - p),
-                    &window,
-                    quantize_up(saturation),
-                );
-                previous = Some(id);
+                        .map(|&(doc, tf)| {
+                            let tf = f64::from(tf.min(MAX_TF));
+                            tf / (tf + lengths[usize::from(field_norms[doc as usize])])
+                        })
+                        .fold(0.0, f64::max);
+                    write_window(
+                        &mut headers,
+                        &mut bodies,
+                        previous.map_or(id, |p| id - p),
+                        &window,
+                        quantize_up(saturation),
+                    );
+                    previous = Some(id);
+                }
+                write_varint(&mut table, windows);
             }
-            write_varint(&mut table, windows);
         }
         bodies.extend_from_slice(&[0; PADDING]);
         let dictionary = dictionary.into_inner().expect("in-memory dictionary");
@@ -225,13 +446,31 @@ impl SegmentBuilder {
                 .expect("sorted unique ids");
         }
         let lookup = lookup.into_inner().expect("in-memory id lookup");
+
+        let (keywords, keyword_docs) = keyword_sections(&mut self.keywords, &mut fields);
+        let numbers = numeric_section(&mut self.numbers, &mut fields);
+        let (stored_index, stored) = stored::write(&self.stored, docs);
+
         let sections = [
-            norms, id_offsets, id_bytes, table, headers, bodies, dictionary, lookup,
+            norms,
+            id_offsets,
+            id_bytes,
+            table,
+            headers,
+            bodies,
+            dictionary,
+            lookup,
+            fields,
+            keywords,
+            keyword_docs,
+            numbers,
+            stored_index,
+            stored,
         ];
         let mut out = Vec::with_capacity(HEADER_LEN + sections.iter().map(Vec::len).sum::<usize>());
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&(docs as u32).to_le_bytes());
-        out.extend_from_slice(&(terms.len() as u32).to_le_bytes());
+        out.extend_from_slice(&term_count.to_le_bytes());
         out.extend_from_slice(&total.to_le_bytes());
         let mut at = HEADER_LEN as u64;
         for section in &sections {
@@ -243,4 +482,72 @@ impl SegmentBuilder {
         }
         out
     }
+}
+
+/// Keys are the field's index byte then the value; values point at delta-coded document lists.
+fn keyword_sections(fields: &mut [KeywordField], meta: &mut Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    write_varint(meta, fields.len() as u32);
+    let mut entries: Vec<(Vec<u8>, &mut Vec<u32>)> = Vec::new();
+    for (f, field) in fields.iter_mut().enumerate() {
+        write_str(meta, &field.name);
+        for (value, docs) in field.docs.iter_mut() {
+            let mut key = Vec::with_capacity(value.len() + 1);
+            key.push(f as u8);
+            key.extend_from_slice(value.as_bytes());
+            entries.push((key, docs));
+        }
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut map = fst::MapBuilder::memory();
+    let mut lists = Vec::new();
+    for (key, docs) in entries {
+        docs.sort_unstable();
+        docs.dedup();
+        map.insert(&key, lists.len() as u64)
+            .expect("sorted unique keyword keys");
+        write_varint(&mut lists, docs.len() as u32);
+        let mut previous = 0;
+        for &doc in docs.iter() {
+            write_varint(&mut lists, doc - previous);
+            previous = doc;
+        }
+    }
+    (map.into_inner().expect("in-memory keyword map"), lists)
+}
+
+/// Per field, values sorted ascending then their documents; floats if any value is one.
+fn numeric_section(fields: &mut [NumericField], meta: &mut Vec<u8>) -> Vec<u8> {
+    write_varint(meta, fields.len() as u32);
+    let mut out = Vec::new();
+    for field in fields.iter_mut() {
+        let float = field.values.iter().any(|v| matches!(v.0, Number::Float(_)));
+        let mut pairs: Vec<(u64, i64, f64, u32)> = field
+            .values
+            .iter()
+            .map(|&(v, doc)| match (float, v) {
+                (false, Number::Int(i)) => (i as u64, i, 0.0, doc),
+                (_, v) => {
+                    let x = v.as_f64();
+                    (x.to_bits(), 0, x, doc)
+                }
+            })
+            .collect();
+        if float {
+            pairs.sort_unstable_by(|a, b| a.2.total_cmp(&b.2).then(a.3.cmp(&b.3)));
+        } else {
+            pairs.sort_unstable_by(|a, b| a.1.cmp(&b.1).then(a.3.cmp(&b.3)));
+        }
+        pairs.dedup_by(|a, b| a.0 == b.0 && a.3 == b.3);
+        write_str(meta, &field.name);
+        meta.push(u8::from(float));
+        write_varint64(meta, out.len() as u64);
+        write_varint(meta, pairs.len() as u32);
+        for p in &pairs {
+            out.extend_from_slice(&p.0.to_le_bytes());
+        }
+        for p in &pairs {
+            out.extend_from_slice(&p.3.to_le_bytes());
+        }
+    }
+    out
 }
