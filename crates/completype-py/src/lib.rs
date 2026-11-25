@@ -10,6 +10,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyType};
 
+mod fts;
+
 // Returns freed memory to the system, which glibc keeps after a build.
 #[cfg(target_os = "linux")]
 #[global_allocator]
@@ -3116,5 +3118,6 @@ fn completype(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AliasSuggestion>()?;
     m.add_class::<HybridSuggestion>()?;
     m.add_function(wrap_pyfunction!(key_id, m)?)?;
+    fts::register(m)?;
     Ok(())
 }

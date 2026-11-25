@@ -137,6 +137,7 @@ nav:
       - Many writers: guides/writers.md
       - asyncio: guides/asyncio.md
       - Collections: guides/collections.md
+      - Full-text search: guides/full-text-search.md
       - Command line: guides/cli.md
       - Observability: guides/observability.md
       - Configuration: guides/configuration.md

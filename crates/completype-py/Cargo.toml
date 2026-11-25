@@ -19,6 +19,7 @@ log = "0.4"
 pyo3-log = "0.13"
 tracing = { version = "0.1", default-features = false, features = ["log"] }
 completype_rs = { package = "completype", path = "../completype", features = ["aws-credentials", "gcp", "azure"] }
+completype_fts = { package = "completype-fts", path = "../completype-fts" }
 
 # Not on macOS, where every mimalloc in a process shares fixed thread slots and pyarrow ships one.
 [target.'cfg(target_os = "linux")'.dependencies]
