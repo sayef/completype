@@ -25,7 +25,8 @@ import tantivy
 
 from workload import Vocabulary, batches, expand_query, ndcg10, query_variants, recall100, tokens
 
-ENGINES = ("completype-fts", "fts", "fts-any-first", "fts-exact", "fts-reordered", "tantivy", "lucene", "meilisearch", "typesense")
+ENGINES = ("completype-fts", "fts", "fts-any-first", "fts-exact", "fts-reordered", "fts-stop", "fts-stem",
+           "fts-stem-stop", "tantivy", "lucene", "meilisearch", "typesense")
 K = 100
 BATCH_SIZE = 5000
 LARGE_CORPUS_ENGINE_LIMIT_SECONDS = 25 * 60
@@ -99,7 +100,9 @@ def start_library(engine, binary_dir, work, corpus):
     mode = "exact" if engine == "fts-exact" else "typos"
     order = "reorder" if engine == "fts-reordered" else "plain"
     first = "any-first" if engine == "fts-any-first" else "keep-first"
-    with launch([binary_dir / "fts-serve", str(work / "index"), mode, order, first], work, pipes=True) as process:
+    language = "-".join(part for part in ("stem", "stop") if part in engine.split("-")) or "plain"
+    command = [binary_dir / "fts-serve", str(work / "index"), mode, order, first, language]
+    with launch(command, work, pipes=True) as process:
         for row in corpus:
             process.stdin.write(row)
         process.stdin.write("\n")
