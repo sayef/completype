@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "completype"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "completype-cli"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "clap",
  "completype",
@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "completype-py"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "completype",
  "log",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "completype-vector"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "turbovec",
 ]
