@@ -2,7 +2,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use completype_fts::Index;
+use completype_fts::{Analyzer, Index, Language, StopWords};
 
 fn main() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -10,7 +10,14 @@ fn main() -> io::Result<()> {
     let typos = args.next().as_deref() != Some("exact");
     let reorder = args.next().as_deref() == Some("reorder");
     let any_first = args.next().as_deref() == Some("any-first");
-    let index = Index::open(&dir)?.with_reordering(if reorder { completype_fts::Reordering::Always } else { completype_fts::Reordering::Never }).with_first_letter_typos(any_first);
+    let language = args.next().unwrap_or_default();
+    let mut index = Index::open(&dir)?.with_reordering(if reorder { completype_fts::Reordering::Always } else { completype_fts::Reordering::Never }).with_first_letter_typos(any_first);
+    if language.contains("stem") {
+        index = index.with_analyzer(Analyzer::default().stem(Language::English));
+    }
+    if language.contains("stop") {
+        index = index.with_stop_words(StopWords::snowball(Language::English).expect("English list"));
+    }
     let mut writer = index.writer()?;
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();

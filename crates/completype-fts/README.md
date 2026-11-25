@@ -45,6 +45,16 @@ let hits = reader.query(&query);
 let payloads = reader.documents(&hits);
 ```
 
+Stemming and stop words, both off by default:
+
+```rust
+use completype_fts::{Analyzer, Index, Language, StopWords};
+
+let index = Index::open("my-index")?
+    .with_analyzer(Analyzer::default().stem(Language::English))
+    .with_stop_words(StopWords::snowball(Language::English).unwrap().with(["etc"]));
+```
+
 ## What it does
 
 - **Exact BM25.** Results equal scoring every matching document (Lucene's one-byte document lengths, `k1 = 1.2`, `b = 0.75`), ties in document order. Pruning never changes a result.
@@ -56,8 +66,10 @@ let payloads = reader.documents(&hits);
 - **Compact, memory-mapped segments.** Single postings live in the term dictionary, windows hold a presence mask or offsets and bit-packed term frequencies.
 - **Index lifecycle.** One writer adds, replaces and deletes documents by id and commits atomically; readers are snapshots; small segments merge automatically, `Writer::merge` merges everything. Fields, filter values and payloads follow their documents through merges and reordering.
 - **Typo tolerance.** `Reader::search` and `Reader::query` also match the closest much more common indexed spelling of a rare query term, looked up in all fields together (adjacent transpositions count as one edit, the first letter is kept unless `with_first_letter_typos(true)`). `Reader::search_exact` and `Query::exact` skip it.
-- **Analysis.** Unicode words, lowercase, accents folded, CJK characters as single terms.
+- **Analysis.** Unicode words, lowercase, accents folded, CJK characters as single terms. One analyzer per index, used for every field.
+- **Stemming.** `Analyzer::stem` reduces words to their Snowball stem (35 languages, via `frostem`) at index and query time, before folding accents. The index records its analyzer at the first commit, `Index::open` adopts it, and a reader or writer with a different one is refused.
+- **Stop words.** `Index::with_stop_words` leaves words out of queries, never out of the index; a query of nothing but stop words keeps them all. `StopWords::snowball` gives the Snowball project's list for 17 languages (BSD-3-Clause, see `stopwords/LICENSE`). A typo corrected to a stop word is dropped too.
 
 ## Not yet
 
-Phrase and proximity queries, facet counts, sorting by a field, per-field analyzers, stemming, Python bindings.
+Phrase and proximity queries, facet counts, sorting by a field, per-field analyzers, Python bindings.

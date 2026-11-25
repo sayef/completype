@@ -775,6 +775,7 @@ dependencies = [
 name = "completype-fts"
 version = "0.0.0"
 dependencies = [
+ "frostem",
  "fst",
  "memmap2",
  "rayon",
@@ -1030,6 +1031,12 @@ checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
+
+[[package]]
+name = "frostem"
+version = "2.20261016.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b2eb73eb983c1ba06d5da86b2b630ff66bd4f29655c2826e6413b1b025e0d33"
 
 [[package]]
 name = "fs_extra"
