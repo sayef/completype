@@ -1,0 +1,3 @@
+completype-fts 2
+analyzer accents=fold stem=none
+1 -

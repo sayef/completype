@@ -8,6 +8,7 @@ use memmap2::Mmap;
 
 use crate::document::Number;
 use crate::format::*;
+use crate::positions::{self, Blocks, Located};
 use crate::stored;
 
 enum Storage {
@@ -48,6 +49,7 @@ pub struct Segment {
     keyword_fields: Vec<String>,
     keywords: fst::Map<Slice>,
     numeric: Vec<NumericField>,
+    position_terms: Option<fst::Map<Slice>>,
 }
 
 /// A text field's name and statistics in one segment.
@@ -101,16 +103,22 @@ impl Segment {
 
     fn new(storage: Storage) -> io::Result<Self> {
         let bytes = storage.as_ref();
-        if bytes.len() < HEADER_LEN || &bytes[..8] != MAGIC {
-            return Err(invalid("not a completype-fts segment"));
+        let count = match bytes.get(..8) {
+            Some(m) if m == MAGIC => SECTIONS,
+            Some(m) if m == MAGIC_V4 => SECTIONS_V4,
+            _ => return Err(invalid("not a completype-fts segment")),
+        };
+        if bytes.len() < header_len(count) {
+            return Err(invalid("segment header is short"));
         }
         let docs = u32_at(bytes, 8);
         let total = u64_at(bytes, 16);
-        let starts: Vec<usize> = (0..SECTIONS)
+        let starts: Vec<usize> = (0..count)
             .map(|i| u64_at(bytes, 24 + 8 * i) as usize)
             .collect();
-        let mut sections: [Range<usize>; SECTIONS] = Default::default();
-        for i in 0..SECTIONS {
+        let mut sections: [Range<usize>; SECTIONS] =
+            std::array::from_fn(|_| bytes.len()..bytes.len());
+        for i in 0..count {
             let end = starts.get(i + 1).copied().unwrap_or(bytes.len());
             if starts[i] > end || end > bytes.len() {
                 return Err(invalid("segment sections are out of range"));
@@ -133,6 +141,15 @@ impl Segment {
             range: sections[KEYWORDS].clone(),
         };
         let keywords = fst::Map::new(slice).map_err(|e| invalid(&e.to_string()))?;
+        let position_terms = if sections[POSITION_TERMS].is_empty() {
+            None
+        } else {
+            let slice = Slice {
+                storage: storage.clone(),
+                range: sections[POSITION_TERMS].clone(),
+            };
+            Some(fst::Map::new(slice).map_err(|e| invalid(&e.to_string()))?)
+        };
         let meta = &storage.as_ref().as_ref()[sections[FIELDS].clone()];
         let (text, keyword_fields, numeric) =
             read_fields(meta).ok_or_else(|| invalid("segment fields are malformed"))?;
@@ -150,7 +167,47 @@ impl Segment {
             keyword_fields,
             keywords,
             numeric,
+            position_terms,
         })
+    }
+
+    /// Whether the segment keeps token positions, which phrase queries need.
+    pub fn has_positions(&self) -> bool {
+        self.position_terms.is_some()
+    }
+
+    /// Where a term's positions in a text field are, if the segment keeps them.
+    pub(crate) fn term_positions(&self, field: u8, term: &str) -> Option<Located> {
+        let start = self.position_terms.as_ref()?.get(term)?;
+        let value = self.dictionary.get(term)?;
+        let rank = self.fields_of(value).position(|(f, _)| f == field)?;
+        Some(positions::locate(
+            self.section(POSITIONS),
+            start as usize,
+            rank,
+        ))
+    }
+
+    pub(crate) fn positions_section(&self) -> &[u8] {
+        self.section(POSITIONS)
+    }
+
+    /// Every position of a term-field, `positions::kept(tf)` per posting in document order.
+    pub(crate) fn all_positions(&self, info: &TermInfo, located: Located) -> Vec<u32> {
+        let section = self.section(POSITIONS);
+        let bodies = self.bodies(info);
+        let (mut out, mut doc) = (Vec::new(), Vec::new());
+        for (window, block) in self.headers(info).zip(Blocks::new(section, located)) {
+            let (mask, tfs) = window.decode(bodies);
+            let mut first = 0;
+            for rank in 0..mask.count_ones() as usize {
+                let count = positions::kept(tfs.get(rank));
+                positions::read(section, block, first, count, &mut doc);
+                out.extend_from_slice(&doc);
+                first += count;
+            }
+        }
+        out
     }
 
     pub(crate) fn section(&self, i: usize) -> &[u8] {
@@ -384,6 +441,8 @@ impl Segment {
             "numbers",
             "stored index",
             "stored",
+            "position terms",
+            "positions",
         ];
         std::array::from_fn(|i| (names[i], self.sections[i].len()))
     }

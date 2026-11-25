@@ -6,16 +6,22 @@ use std::path::{Path, PathBuf};
 use fst::Streamer;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::build::List;
 use crate::search::{Collection, FieldStats, Ranked, TopK};
 
 /// Postings lists by text field and term, in document order.
-type Postings = BTreeMap<(usize, Vec<u8>), Vec<(u32, u32)>>;
+type Postings = BTreeMap<(usize, Vec<u8>), List>;
+/// A phrase clause: field, analysed words, slop and weight.
+type PhraseClause<'a> = (&'a str, &'a [String], u32, f32);
 use crate::{Analyzer, Document, Filter, Query, Searcher, Segment, SegmentBuilder, StopWords};
 
 const MANIFEST: &str = "manifest";
-const MANIFEST_HEADER: &str = "completype-fts 2";
+const MANIFEST_HEADER: &str = "completype-fts 3";
+/// Written before positions were recorded.
+const MANIFEST_V2: &str = "completype-fts 2";
 /// Written before the analyzer was recorded.
 const MANIFEST_V1: &str = "completype-fts 1";
+const POSITIONS_LINE: &str = "positions";
 const LOCK: &str = "writer.lock";
 /// Merges the smallest segments once a commit leaves more than this many.
 const MAX_SEGMENTS: usize = 10;
@@ -32,6 +38,7 @@ pub struct Index {
     reorder: Reordering,
     first_letter_typos: bool,
     stop_words: Option<StopWords>,
+    positions: bool,
 }
 
 /// When segments are written with similar documents placed together.
@@ -67,7 +74,15 @@ fn deletes_file(number: u64, generation: u64) -> String {
 struct Manifest {
     /// The analyzer that made the segments; `None` before the first commit and in version 1.
     analyzer: Option<Analyzer>,
+    positions: bool,
     entries: Vec<Entry>,
+}
+
+impl Manifest {
+    /// Whether segments were committed, fixing the analyzer and positions.
+    fn committed(&self) -> bool {
+        self.analyzer.is_some() || !self.entries.is_empty()
+    }
 }
 
 fn invalid(message: String) -> io::Error {
@@ -77,17 +92,22 @@ fn invalid(message: String) -> io::Error {
 fn read_manifest(dir: &Path) -> io::Result<Manifest> {
     let text = fs::read_to_string(dir.join(MANIFEST))?;
     let mut lines = text.lines().peekable();
-    let analyzer = match lines.next() {
-        Some(MANIFEST_HEADER) => match lines.next_if(|l| l.starts_with("analyzer ")) {
-            Some(line) => Some(
-                Analyzer::from_spec(&line["analyzer ".len()..])
-                    .ok_or_else(|| invalid(format!("unknown analyzer: {line}")))?,
-            ),
-            None => None,
-        },
+    let header = lines.next();
+    let analyzer = match header {
+        Some(MANIFEST_HEADER | MANIFEST_V2) => {
+            match lines.next_if(|l| l.starts_with("analyzer ")) {
+                Some(line) => Some(
+                    Analyzer::from_spec(&line["analyzer ".len()..])
+                        .ok_or_else(|| invalid(format!("unknown analyzer: {line}")))?,
+                ),
+                None => None,
+            }
+        }
         Some(MANIFEST_V1) => None,
         _ => return Err(invalid("not a completype-fts index".to_owned())),
     };
+    let positions =
+        header == Some(MANIFEST_HEADER) && lines.next_if(|&l| l == POSITIONS_LINE).is_some();
     let entries = lines
         .filter(|l| !l.is_empty())
         .map(|line| {
@@ -106,7 +126,11 @@ fn read_manifest(dir: &Path) -> io::Result<Manifest> {
             }
         })
         .collect::<io::Result<_>>()?;
-    Ok(Manifest { analyzer, entries })
+    Ok(Manifest {
+        analyzer,
+        positions,
+        entries,
+    })
 }
 
 /// Replaces a file atomically: write beside it, sync, rename.
@@ -118,10 +142,19 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(tmp, path)
 }
 
-fn write_manifest(dir: &Path, analyzer: Option<&Analyzer>, entries: &[Entry]) -> io::Result<()> {
+fn write_manifest(
+    dir: &Path,
+    analyzer: Option<&Analyzer>,
+    positions: bool,
+    entries: &[Entry],
+) -> io::Result<()> {
     let mut text = format!("{MANIFEST_HEADER}\n");
     if let Some(analyzer) = analyzer {
         text.push_str(&format!("analyzer {}\n", analyzer.spec()));
+    }
+    if positions {
+        text.push_str(POSITIONS_LINE);
+        text.push('\n');
     }
     for e in entries {
         let deletes = e.deletes.map_or("-".to_owned(), |g| g.to_string());
@@ -149,16 +182,28 @@ impl Index {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
         if !dir.join(MANIFEST).exists() {
-            write_manifest(&dir, None, &[])?;
+            write_manifest(&dir, None, false, &[])?;
         }
-        let analyzer = read_manifest(&dir)?.analyzer.unwrap_or_default();
+        let manifest = read_manifest(&dir)?;
         Ok(Self {
             dir,
-            analyzer,
+            analyzer: manifest.analyzer.unwrap_or_default(),
             reorder: Reordering::OnMerge,
             first_letter_typos: false,
             stop_words: None,
+            positions: manifest.positions,
         })
+    }
+
+    /// Keeps token positions so queries can hold phrases; an index keeps the choice its first
+    /// commit made, as with the analyzer. Off by default: segments grow by about half.
+    pub fn with_positions(mut self, on: bool) -> Self {
+        self.positions = on;
+        self
+    }
+
+    pub fn positions(&self) -> bool {
+        self.positions
     }
 
     /// Analyzes documents and queries; an index keeps the one its first commit used, so
@@ -174,8 +219,19 @@ impl Index {
         self
     }
 
-    /// Fails when the committed segments were analyzed differently.
+    /// Fails when the committed segments were analyzed differently or differ in positions.
     fn check_analyzer(&self, manifest: &Manifest) -> io::Result<()> {
+        if manifest.committed() && manifest.positions != self.positions {
+            let kept = if manifest.positions {
+                "with"
+            } else {
+                "without"
+            };
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} was indexed {kept} positions", self.dir.display()),
+            ));
+        }
         match &manifest.analyzer {
             Some(indexed) if *indexed != self.analyzer => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -237,6 +293,7 @@ impl Index {
             Reordering::OnMerge => merging,
             Reordering::Always => true,
         });
+        builder.positions(self.positions);
         builder
     }
 
@@ -377,7 +434,12 @@ impl Writer {
             };
             entries.push(entry);
         }
-        write_manifest(&dir, Some(&self.index.analyzer), &entries)?;
+        write_manifest(
+            &dir,
+            Some(&self.index.analyzer),
+            self.index.positions,
+            &entries,
+        )?;
         for file in obsolete {
             let _ = fs::remove_file(dir.join(file));
         }
@@ -432,7 +494,12 @@ impl Writer {
             number,
             deletes: None,
         });
-        write_manifest(&dir, Some(&self.index.analyzer), &kept)?;
+        write_manifest(
+            &dir,
+            Some(&self.index.analyzer),
+            self.index.positions,
+            &kept,
+        )?;
         drop(sources);
         for entry in merged {
             let _ = fs::remove_file(dir.join(segment_file(entry.number)));
@@ -456,6 +523,8 @@ fn is_deleted(deletes: &Option<Vec<u64>>, doc: u32) -> bool {
 
 /// One segment holding the live documents of `sources`, oldest first.
 fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentBuilder) -> Vec<u8> {
+    let keep = builder.keeps_positions() && sources.iter().all(|s| s.0.has_positions());
+    builder.positions(keep);
     let mut remap: Vec<Vec<u32>> = Vec::with_capacity(sources.len());
     for (segment, deletes) in sources {
         let mut map = vec![u32::MAX; segment.len()];
@@ -481,15 +550,26 @@ fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentB
         }
         let mut stream = segment.terms();
         while let Some((term, value)) = stream.next() {
+            let text = std::str::from_utf8(term).expect("terms are UTF-8");
             for (field, info) in segment.fields_of(value) {
                 let f = fields[usize::from(field)];
+                let positions = keep
+                    .then(|| segment.term_positions(field, text))
+                    .flatten()
+                    .map(|located| segment.all_positions(&info, located));
                 let list = lists.entry((f, term.to_vec())).or_default();
+                let mut at = 0;
                 for (doc, tf) in segment.postings(&info) {
                     let new = remap[s][doc as usize];
+                    let count = crate::positions::kept(tf);
                     if new != u32::MAX {
-                        list.push((new, tf));
+                        list.docs.push((new, tf));
                         lengths[f][new as usize] += tf;
+                        if let Some(positions) = &positions {
+                            list.positions.extend_from_slice(&positions[at..at + count]);
+                        }
                     }
+                    at += count;
                 }
             }
         }
@@ -498,7 +578,7 @@ fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentB
         builder.set_lengths(f, lengths);
     }
     for ((field, term), list) in lists {
-        if !list.is_empty() {
+        if !list.docs.is_empty() {
             let term = std::str::from_utf8(&term).expect("terms are UTF-8");
             builder.set_postings(field, term, list);
         }
@@ -608,11 +688,12 @@ impl Reader {
     }
 
     fn corrected_terms(&self, text: &str) -> Vec<(String, f32)> {
-        self.query_terms(text, true)
+        self.query_terms(text, true, true)
     }
 
-    /// Weighted terms of a query, without stop words and corrections to them unless that is all.
-    fn query_terms(&self, text: &str, typos: bool) -> Vec<(String, f32)> {
+    /// Weighted terms of a query, without stop words and corrections to them unless that is all
+    /// the query has, phrases included.
+    fn query_terms(&self, text: &str, typos: bool, alone: bool) -> Vec<(String, f32)> {
         let (mut kept, mut all) = (Vec::new(), Vec::new());
         self.analyzer.analyze_words(text, |word, term| {
             let spellings = if typos {
@@ -630,7 +711,7 @@ impl Reader {
             }
             all.extend(spellings);
         });
-        let chosen = if kept.is_empty() { all } else { kept };
+        let chosen = if kept.is_empty() && alone { all } else { kept };
         let mut weights: Vec<(String, f32)> = Vec::new();
         for (word, weight) in chosen {
             match weights.iter_mut().find(|w| w.0 == word) {
@@ -649,14 +730,46 @@ impl Reader {
     }
 
     fn exact_terms(&self, text: &str) -> Vec<(String, f32)> {
-        self.query_terms(text, false)
+        self.query_terms(text, false, true)
     }
 
     /// The best documents for a query over named fields with boosts, within its filter.
     ///
     /// A query without terms returns the first documents the filter allows, with score 0.
+    /// Phrases match nothing in segments kept without positions; [`Reader::try_query`] refuses them.
     pub fn query(&self, query: &Query) -> Vec<SearchHit> {
         self.run_query(query, false)
+    }
+
+    /// [`Reader::query`], failing when it has a phrase and a segment keeps no positions.
+    pub fn try_query(&self, query: &Query) -> io::Result<Vec<SearchHit>> {
+        if !self.has_positions() {
+            let (_, phrases) = self.phrases(query);
+            if phrases.iter().any(|p| p.0.len() > 1) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "the index was written without positions; cannot run a phrase query",
+                ));
+            }
+        }
+        Ok(self.query(query))
+    }
+
+    /// Whether every segment keeps positions, so phrases can match anywhere.
+    pub fn has_positions(&self) -> bool {
+        self.segments.iter().all(|s| s.0.has_positions())
+    }
+
+    /// The query's text outside quotes, and its phrases analysed, quoted ones first.
+    fn phrases(&self, query: &Query) -> (String, Vec<(Vec<String>, u32)>) {
+        let (text, mut phrases) = crate::query::split_phrases(&query.text);
+        phrases.extend(query.phrases.iter().cloned());
+        let analysed = phrases
+            .into_iter()
+            .map(|(text, slop)| (self.analyzer.terms(&text), slop))
+            .filter(|p| !p.0.is_empty())
+            .collect();
+        (text, analysed)
     }
 
     /// [`Reader::query`] scoring every posting: the reference pruning must equal.
@@ -666,12 +779,9 @@ impl Reader {
     }
 
     fn run_query(&self, query: &Query, exhaustive: bool) -> Vec<SearchHit> {
-        let weights = if query.typos {
-            self.corrected_terms(&query.text)
-        } else {
-            self.exact_terms(&query.text)
-        };
-        if weights.is_empty() {
+        let (text, phrases) = self.phrases(query);
+        let weights = self.query_terms(&text, query.typos, phrases.is_empty());
+        if weights.is_empty() && phrases.is_empty() {
             return self.placeholder(query.filter.as_ref(), query.limit);
         }
         let fields: Vec<(&str, f32)> = if query.fields.is_empty() {
@@ -681,7 +791,21 @@ impl Reader {
         };
         let weights: Vec<(&str, f32)> = weights.iter().map(|(t, w)| (t.as_str(), *w)).collect();
         let terms = expand(&weights, &fields);
-        self.run(&terms, query.filter.as_ref(), query.limit, exhaustive)
+        let phrases: Vec<PhraseClause> = fields
+            .iter()
+            .flat_map(|&(f, boost)| {
+                phrases
+                    .iter()
+                    .map(move |(words, slop)| (f, words.as_slice(), *slop, boost))
+            })
+            .collect();
+        self.run(
+            &terms,
+            &phrases,
+            query.filter.as_ref(),
+            query.limit,
+            exhaustive,
+        )
     }
 
     fn all_fields(&self) -> Vec<(&str, f32)> {
@@ -807,7 +931,7 @@ impl Reader {
         limit: usize,
     ) -> Vec<SearchHit> {
         let terms: Vec<(&str, f32)> = terms.into_iter().collect();
-        self.run(&expand(&terms, &self.all_fields()), None, limit, false)
+        self.run(&expand(&terms, &self.all_fields()), &[], None, limit, false)
     }
 
     /// [`Reader::search_terms`] scoring every posting: the reference pruning must equal.
@@ -818,26 +942,31 @@ impl Reader {
         limit: usize,
     ) -> Vec<SearchHit> {
         let terms: Vec<(&str, f32)> = terms.into_iter().collect();
-        self.run(&expand(&terms, &self.all_fields()), None, limit, true)
+        self.run(&expand(&terms, &self.all_fields()), &[], None, limit, true)
     }
 
-    /// Top `limit` for `(field, term, weight)` within `filter`.
+    /// Documents with `term` in field `f`, over all segments.
+    fn field_df(&self, f: &str, term: &str) -> u64 {
+        self.segments
+            .iter()
+            .filter_map(|(s, _)| Some(s.field_document_frequency(s.text_field(f)?, term)))
+            .map(u64::from)
+            .sum()
+    }
+
+    /// Top `limit` for `(field, term, weight)` and phrase clauses within `filter`.
     fn run(
         &self,
         terms: &[(&str, &str, f32)],
+        phrases: &[PhraseClause],
         filter: Option<&Filter>,
         limit: usize,
         exhaustive: bool,
     ) -> Vec<SearchHit> {
-        let dfs: Vec<u64> = terms
+        let dfs: Vec<u64> = terms.iter().map(|&(f, t, _)| self.field_df(f, t)).collect();
+        let phrase_dfs: Vec<Vec<u64>> = phrases
             .iter()
-            .map(|&(f, t, _)| {
-                self.segments
-                    .iter()
-                    .filter_map(|(s, _)| Some(s.field_document_frequency(s.text_field(f)?, t)))
-                    .map(u64::from)
-                    .sum()
-            })
+            .map(|&(f, words, _, _)| words.iter().map(|w| self.field_df(f, w)).collect())
             .collect();
         let mut top = TopK::new(limit);
         let mut order: Vec<usize> = (0..self.segments.len()).collect();
@@ -853,10 +982,17 @@ impl Reader {
             };
             let deleted = excluded.as_deref().or(deletes.as_deref());
             let mut searcher = Searcher::within(segment, self.collections[i].clone(), deleted);
-            let query =
+            let mut query =
                 searcher.prepare_with(terms.iter().zip(&dfs).filter_map(|(&(f, t, w), &df)| {
                     Some((segment.text_field(f)?, t, w, Some(df)))
                 }));
+            for (&(f, words, slop, w), dfs) in phrases.iter().zip(&phrase_dfs) {
+                let Some(field) = segment.text_field(f) else {
+                    continue;
+                };
+                let words: Vec<&str> = words.iter().map(String::as_str).collect();
+                query.extend(searcher.prepare_phrase(field, &words, slop, w, Some(dfs)));
+            }
             if exhaustive {
                 searcher.collect_exhaustive(&query, &mut top, (i as u64) << 32);
             } else {
