@@ -59,6 +59,7 @@ mkdocs build --strict      # what CI runs: no warnings allowed
   `src/database.rs`.
 - `crates/completype-py`: the Python bindings (PyO3), their typed stubs in `python/completype/*.pyi`, which
   are also the source of the Python API reference, and their tests.
+- `crates/completype-vector`: vector quantisation and nearest-neighbour search, used by `completype`.
 - `crates/completype-cli`: the `completype` command.
 - `bench/`: the comparison with tantivy, Typesense and Meilisearch, and the results behind
   [Benchmarks](https://completype.pages.dev/benchmarks/).
@@ -97,6 +98,6 @@ One short line in the imperative mood ("Add hybrid fusion options"). The pull re
 ## Releasing
 
 Every push to `main` opens or updates a release pull request with the version bump and the changelog entry,
-made from the notes under `## [Unreleased]`. Merging it publishes `completype` and `completype-cli` to
+made from the notes under `## [Unreleased]`. Merging it publishes `completype`, `completype-vector` and `completype-cli` to
 crates.io at one version, tags `v<version>` and creates the GitHub release; the Release workflow then builds
 the wheels and publishes them to PyPI.

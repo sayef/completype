@@ -12,7 +12,7 @@ semver_check = true
 name = "completype"
 changelog_update = true
 changelog_path = "CHANGELOG.md"
-changelog_include = ["completype-py", "completype-cli"]
+changelog_include = ["completype-py", "completype-cli", "completype-vector"]
 publish = true
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
@@ -22,6 +22,11 @@ git_release_name = "v{{ version }}"
 # Released with the library at the same version.
 [[package]]
 name = "completype-cli"
+publish = true
+
+# A dependency of the library, released with it at the same version.
+[[package]]
+name = "completype-vector"
 publish = true
 
 # Versioned through the workspace version, built and published to PyPI by release.yml.
