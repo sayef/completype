@@ -18,7 +18,7 @@ exclude = ["tests/", "examples/", "benches/"]
 features = ["store", "aws-credentials", "gcp", "azure"]
 
 [dependencies]
-completype-vector = { path = "../completype-vector", version = "0.2.3" }
+completype-vector = { path = "../completype-vector", version = "0.2.4" }
 arc-swap = "1.7"
 fst = "0.4"
 memmap2 = "0.9"
