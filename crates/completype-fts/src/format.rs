@@ -3,16 +3,18 @@
 
 pub(crate) const WINDOW: usize = u128::BITS as usize;
 pub(crate) const MASK_FROM: usize = 16;
-pub(crate) const MAGIC: &[u8; 8] = b"CTFTS\0\0\x03";
+pub(crate) const MAGIC: &[u8; 8] = b"CTFTS\0\0\x04";
 /// Zero bytes after the bodies, so bit-packed reads never run past the end.
 pub(crate) const PADDING: usize = 8;
 /// Dictionary values with this bit hold a term's only posting instead of a record offset.
 pub(crate) const INLINE: u64 = 1 << 63;
+/// Where an inline posting keeps its field.
+pub(crate) const INLINE_FIELD_SHIFT: u32 = 48;
 pub(crate) const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 8 * SECTIONS;
 pub(crate) const K1: f32 = 1.2;
 pub(crate) const B: f32 = 0.75;
 
-pub(crate) const SECTIONS: usize = 8;
+pub(crate) const SECTIONS: usize = 14;
 pub(crate) const NORMS: usize = 0;
 pub(crate) const ID_OFFSETS: usize = 1;
 pub(crate) const ID_BYTES: usize = 2;
@@ -21,6 +23,12 @@ pub(crate) const HEADERS: usize = 4;
 pub(crate) const BODIES: usize = 5;
 pub(crate) const DICTIONARY: usize = 6;
 pub(crate) const ID_LOOKUP: usize = 7;
+pub(crate) const FIELDS: usize = 8;
+pub(crate) const KEYWORDS: usize = 9;
+pub(crate) const KEYWORD_DOCS: usize = 10;
+pub(crate) const NUMBERS: usize = 11;
+pub(crate) const STORED_INDEX: usize = 12;
+pub(crate) const STORED: usize = 13;
 
 /// The most a stored term frequency can be.
 pub(crate) const MAX_TF: u32 = u16::MAX as u32;
@@ -276,6 +284,20 @@ pub(crate) fn read_varint64(bytes: &[u8], at: &mut usize) -> u64 {
         }
         shift += 7;
     }
+}
+
+pub(crate) fn write_str(out: &mut Vec<u8>, s: &str) {
+    write_varint(out, s.len() as u32);
+    out.extend_from_slice(s.as_bytes());
+}
+
+pub(crate) fn read_str(bytes: &[u8], at: &mut usize) -> Option<String> {
+    let len = read_varint(bytes, at) as usize;
+    let s = std::str::from_utf8(bytes.get(*at..*at + len)?)
+        .ok()?
+        .to_owned();
+    *at += len;
+    Some(s)
 }
 
 pub(crate) fn u32_at(bytes: &[u8], at: usize) -> u32 {

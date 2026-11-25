@@ -6,8 +6,11 @@ use std::path::{Path, PathBuf};
 use fst::Streamer;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::search::{Collection, Ranked, TopK};
-use crate::{Analyzer, Searcher, Segment, SegmentBuilder};
+use crate::search::{Collection, FieldStats, Ranked, TopK};
+
+/// Postings lists by text field and term, in document order.
+type Postings = BTreeMap<(usize, Vec<u8>), Vec<(u32, u32)>>;
+use crate::{Analyzer, Document, Filter, Query, Searcher, Segment, SegmentBuilder};
 
 const MANIFEST: &str = "manifest";
 const MANIFEST_HEADER: &str = "completype-fts 1";
@@ -201,15 +204,34 @@ impl Index {
             let segment = Segment::open(self.dir.join(segment_file(entry.number)))?;
             segments.push((segment, read_deletes(&self.dir, entry)?));
         }
-        let collection = Collection {
-            docs: segments.iter().map(|s| s.0.len() as u64).sum(),
-            tokens: segments.iter().map(|s| s.0.total_tokens()).sum(),
-        };
+        let mut fields: Vec<String> = Vec::new();
+        let mut stats: FxHashMap<&str, FieldStats> = FxHashMap::default();
+        for (segment, _) in &segments {
+            for field in segment.text_fields() {
+                if !fields.contains(&field.name) {
+                    fields.push(field.name.clone());
+                }
+                let total = stats.entry(&field.name).or_default();
+                total.docs += u64::from(field.docs);
+                total.tokens += field.tokens;
+            }
+        }
+        let collections = segments
+            .iter()
+            .map(|(segment, _)| Collection {
+                fields: segment
+                    .text_fields()
+                    .iter()
+                    .map(|f| stats[f.name.as_str()])
+                    .collect(),
+            })
+            .collect();
         Ok(Reader {
             analyzer: self.analyzer.clone(),
             first_letter_typos: self.first_letter_typos,
             segments,
-            collection,
+            collections,
+            fields,
         })
     }
 }
@@ -241,6 +263,15 @@ impl Writer {
         self.delete(id);
         let doc = self.builder.len() as u32;
         self.builder.add(id, terms);
+        self.buffered.insert(id.to_owned(), doc);
+    }
+
+    /// Adds a document with named fields, replacing any earlier one with the same id.
+    pub fn add_document(&mut self, id: &str, document: &Document) {
+        self.delete(id);
+        let doc = self.builder.len() as u32;
+        self.builder
+            .add_document(id, document, &self.index.analyzer);
         self.buffered.insert(id.to_owned(), doc);
     }
 
@@ -375,43 +406,87 @@ fn is_deleted(deletes: &Option<Vec<u64>>, doc: u32) -> bool {
 /// One segment holding the live documents of `sources`, oldest first.
 fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentBuilder) -> Vec<u8> {
     let mut remap: Vec<Vec<u32>> = Vec::with_capacity(sources.len());
-    let mut lengths: Vec<u32> = Vec::new();
     for (segment, deletes) in sources {
         let mut map = vec![u32::MAX; segment.len()];
         for doc in 0..segment.len() as u32 {
             if !is_deleted(deletes, doc) {
-                map[doc as usize] = lengths.len() as u32;
-                lengths.push(0);
+                map[doc as usize] = builder.push_document(segment.id(doc).to_owned());
             }
         }
         remap.push(map);
     }
-    let mut lists: BTreeMap<Vec<u8>, Vec<(u32, u32)>> = BTreeMap::new();
+    let live = builder.len();
+    let mut lengths: Vec<Vec<u32>> = Vec::new();
+    let mut lists = Postings::new();
     for (s, (segment, _)) in sources.iter().enumerate() {
+        let fields: Vec<usize> = segment
+            .text_fields()
+            .iter()
+            .map(|f| builder.text_field(&f.name))
+            .collect();
+        let count = fields.iter().map(|&f| f + 1).max().unwrap_or(0);
+        if lengths.len() < count {
+            lengths.resize_with(count, || vec![0; live]);
+        }
         let mut stream = segment.terms();
         while let Some((term, value)) = stream.next() {
-            let info = segment.info(value);
-            let list = lists.entry(term.to_vec()).or_default();
-            for (doc, tf) in segment.postings(&info) {
-                let new = remap[s][doc as usize];
-                if new != u32::MAX {
-                    list.push((new, tf));
-                    lengths[new as usize] += tf;
+            for (field, info) in segment.fields_of(value) {
+                let f = fields[usize::from(field)];
+                let list = lists.entry((f, term.to_vec())).or_default();
+                for (doc, tf) in segment.postings(&info) {
+                    let new = remap[s][doc as usize];
+                    if new != u32::MAX {
+                        list.push((new, tf));
+                        lengths[f][new as usize] += tf;
+                    }
                 }
             }
         }
     }
-    for (s, (segment, _)) in sources.iter().enumerate() {
-        for doc in 0..segment.len() as u32 {
-            let new = remap[s][doc as usize];
-            if new != u32::MAX {
-                builder.push_document(segment.id(doc).to_owned(), lengths[new as usize]);
-            }
+    for (f, lengths) in lengths.into_iter().enumerate() {
+        builder.set_lengths(f, lengths);
+    }
+    for ((field, term), list) in lists {
+        if !list.is_empty() {
+            let term = std::str::from_utf8(&term).expect("terms are UTF-8");
+            builder.set_postings(field, term, list);
         }
     }
-    for (term, list) in lists {
-        if !list.is_empty() {
-            builder.set_postings(std::str::from_utf8(&term).expect("terms are UTF-8"), list);
+    for (s, (segment, _)) in sources.iter().enumerate() {
+        let names = segment.keyword_fields();
+        let mut stream = segment.keyword_entries();
+        while let Some((key, offset)) = stream.next() {
+            let name = &names[usize::from(key[0])];
+            let value = std::str::from_utf8(&key[1..]).expect("keywords are UTF-8");
+            for doc in segment.keyword_list(Some(offset)) {
+                let new = remap[s][doc as usize];
+                if new != u32::MAX {
+                    builder.push_keyword(name, value, new);
+                }
+            }
+        }
+        for field in segment.numeric_fields() {
+            for i in 0..field.count {
+                let (value, doc) = segment.numeric(field, i);
+                let new = remap[s][doc as usize];
+                if new != u32::MAX {
+                    builder.push_number(&field.name, value, new);
+                }
+            }
+        }
+        let mut block: Option<(usize, Vec<u8>)> = None;
+        for doc in 0..segment.len() as u32 {
+            let new = remap[s][doc as usize];
+            let Some((b, first)) = segment.stored_block(doc).filter(|_| new != u32::MAX) else {
+                continue;
+            };
+            if block.as_ref().is_none_or(|c| c.0 != b) {
+                block = Some((b, segment.stored_bytes(b)));
+            }
+            let bytes = &block.as_ref().expect("block just read").1;
+            if let Some(payload) = crate::stored::extract(bytes, (doc - first) as usize) {
+                builder.set_stored(new, payload.into());
+            }
         }
     }
     builder.finish()
@@ -422,7 +497,9 @@ pub struct Reader {
     analyzer: Analyzer,
     first_letter_typos: bool,
     segments: Vec<(Segment, Option<Vec<u64>>)>,
-    collection: Collection,
+    collections: Vec<Collection>,
+    /// Text fields of all segments, in order of first appearance.
+    fields: Vec<String>,
 }
 
 impl Reader {
@@ -446,9 +523,14 @@ impl Reader {
         self.segments.len()
     }
 
-    /// The best `limit` documents for `text`, analysed like the documents, with rare terms
-    /// also matching their likely correct spelling.
+    /// The best `limit` documents for `text` in every text field, analysed like the documents,
+    /// with rare terms also matching their likely correct spelling.
     pub fn search(&self, text: &str, limit: usize) -> Vec<SearchHit> {
+        let weights = self.corrected_terms(text);
+        self.search_terms(weights.iter().map(|(t, w)| (t.as_str(), *w)), limit)
+    }
+
+    fn corrected_terms(&self, text: &str) -> Vec<(String, f32)> {
         let mut weights: Vec<(String, f32)> = Vec::new();
         for term in self.analyzer.terms(text) {
             for (word, weight) in self.spellings(&term) {
@@ -458,11 +540,16 @@ impl Reader {
                 }
             }
         }
-        self.search_terms(weights.iter().map(|(t, w)| (t.as_str(), *w)), limit)
+        weights
     }
 
     /// [`Reader::search`] without spelling corrections.
     pub fn search_exact(&self, text: &str, limit: usize) -> Vec<SearchHit> {
+        let weights = self.exact_terms(text);
+        self.search_terms(weights.iter().map(|(t, w)| (t.as_str(), *w)), limit)
+    }
+
+    fn exact_terms(&self, text: &str) -> Vec<(String, f32)> {
         let mut weights: Vec<(String, f32)> = Vec::new();
         self.analyzer.analyze(text, |term| {
             match weights.iter_mut().find(|w| w.0 == term) {
@@ -470,7 +557,100 @@ impl Reader {
                 None => weights.push((term.to_owned(), 1.0)),
             }
         });
-        self.search_terms(weights.iter().map(|(t, w)| (t.as_str(), *w)), limit)
+        weights
+    }
+
+    /// The best documents for a query over named fields with boosts, within its filter.
+    ///
+    /// A query without terms returns the first documents the filter allows, with score 0.
+    pub fn query(&self, query: &Query) -> Vec<SearchHit> {
+        self.run_query(query, false)
+    }
+
+    /// [`Reader::query`] scoring every posting: the reference pruning must equal.
+    #[doc(hidden)]
+    pub fn query_exhaustive(&self, query: &Query) -> Vec<SearchHit> {
+        self.run_query(query, true)
+    }
+
+    fn run_query(&self, query: &Query, exhaustive: bool) -> Vec<SearchHit> {
+        let weights = if query.typos {
+            self.corrected_terms(&query.text)
+        } else {
+            self.exact_terms(&query.text)
+        };
+        if weights.is_empty() {
+            return self.placeholder(query.filter.as_ref(), query.limit);
+        }
+        let fields: Vec<(&str, f32)> = if query.fields.is_empty() {
+            self.all_fields()
+        } else {
+            query.fields.iter().map(|(f, b)| (f.as_str(), *b)).collect()
+        };
+        let weights: Vec<(&str, f32)> = weights.iter().map(|(t, w)| (t.as_str(), *w)).collect();
+        let terms = expand(&weights, &fields);
+        self.run(&terms, query.filter.as_ref(), query.limit, exhaustive)
+    }
+
+    fn all_fields(&self) -> Vec<(&str, f32)> {
+        self.fields.iter().map(|f| (f.as_str(), 1.0)).collect()
+    }
+
+    /// The first `limit` live documents `filter` allows, oldest segment first.
+    fn placeholder(&self, filter: Option<&Filter>, limit: usize) -> Vec<SearchHit> {
+        let mut hits = Vec::new();
+        for (segment, deletes) in &self.segments {
+            let allowed = filter.map(|f| f.allowed(segment));
+            for doc in 0..segment.len() as u32 {
+                if hits.len() >= limit {
+                    return hits;
+                }
+                let out = allowed
+                    .as_ref()
+                    .is_some_and(|a| a[doc as usize / 64] >> (doc % 64) & 1 == 0);
+                if !out && !is_deleted(deletes, doc) {
+                    hits.push(SearchHit {
+                        id: segment.id(doc).to_owned(),
+                        score: 0.0,
+                    });
+                }
+            }
+        }
+        hits
+    }
+
+    /// The stored payload of a live document.
+    pub fn document(&self, id: &str) -> Option<Vec<u8>> {
+        let (i, doc) = self.locate(id)?;
+        self.segments[i].0.stored(doc)
+    }
+
+    /// Stored payloads of `hits`, in order, decompressing each block once.
+    pub fn documents(&self, hits: &[SearchHit]) -> Vec<Option<Vec<u8>>> {
+        let mut blocks: FxHashMap<(usize, usize), Vec<u8>> = FxHashMap::default();
+        hits.iter()
+            .map(|hit| {
+                let (i, doc) = self.locate(&hit.id)?;
+                let segment = &self.segments[i].0;
+                let (block, first) = segment.stored_block(doc)?;
+                let bytes = blocks
+                    .entry((i, block))
+                    .or_insert_with(|| segment.stored_bytes(block));
+                crate::stored::extract(bytes, (doc - first) as usize)
+            })
+            .collect()
+    }
+
+    /// The segment and document holding the live document `id`.
+    fn locate(&self, id: &str) -> Option<(usize, u32)> {
+        self.segments
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, (segment, deletes))| {
+                let doc = segment.doc(id)?;
+                (!is_deleted(deletes, doc)).then_some((i, doc))
+            })
     }
 
     pub fn document_frequency(&self, term: &str) -> u64 {
@@ -528,13 +708,14 @@ impl Reader {
         }
     }
 
-    /// The best `limit` documents for weighted terms, scored with BM25 over all segments.
+    /// The best `limit` documents for weighted terms in every text field, scored with BM25 over all segments.
     pub fn search_terms<'a>(
         &self,
         terms: impl IntoIterator<Item = (&'a str, f32)>,
         limit: usize,
     ) -> Vec<SearchHit> {
-        self.run(terms, limit, false)
+        let terms: Vec<(&str, f32)> = terms.into_iter().collect();
+        self.run(&expand(&terms, &self.all_fields()), None, limit, false)
     }
 
     /// [`Reader::search_terms`] scoring every posting: the reference pruning must equal.
@@ -544,22 +725,25 @@ impl Reader {
         terms: impl IntoIterator<Item = (&'a str, f32)>,
         limit: usize,
     ) -> Vec<SearchHit> {
-        self.run(terms, limit, true)
+        let terms: Vec<(&str, f32)> = terms.into_iter().collect();
+        self.run(&expand(&terms, &self.all_fields()), None, limit, true)
     }
 
-    fn run<'a>(
+    /// Top `limit` for `(field, term, weight)` within `filter`.
+    fn run(
         &self,
-        terms: impl IntoIterator<Item = (&'a str, f32)>,
+        terms: &[(&str, &str, f32)],
+        filter: Option<&Filter>,
         limit: usize,
         exhaustive: bool,
     ) -> Vec<SearchHit> {
-        let terms: Vec<(&str, f32)> = terms.into_iter().collect();
         let dfs: Vec<u64> = terms
             .iter()
-            .map(|(t, _)| {
+            .map(|&(f, t, _)| {
                 self.segments
                     .iter()
-                    .map(|s| u64::from(s.0.document_frequency(t)))
+                    .filter_map(|(s, _)| Some(s.field_document_frequency(s.text_field(f)?, t)))
+                    .map(u64::from)
                     .sum()
             })
             .collect();
@@ -568,13 +752,19 @@ impl Reader {
         order.sort_by_key(|&i| std::cmp::Reverse(self.segments[i].0.len()));
         for i in order {
             let (segment, deletes) = &self.segments[i];
-            let mut searcher = Searcher::within(segment, self.collection, deletes.as_deref());
-            let query = searcher.prepare_with(
-                terms
-                    .iter()
-                    .zip(&dfs)
-                    .map(|(&(t, w), &df)| (t, w, Some(df))),
-            );
+            let excluded = match filter {
+                Some(filter) => match self.excluded(i, filter) {
+                    Some(bits) => Some(bits),
+                    None => continue,
+                },
+                None => None,
+            };
+            let deleted = excluded.as_deref().or(deletes.as_deref());
+            let mut searcher = Searcher::within(segment, self.collections[i].clone(), deleted);
+            let query =
+                searcher.prepare_with(terms.iter().zip(&dfs).filter_map(|(&(f, t, w), &df)| {
+                    Some((segment.text_field(f)?, t, w, Some(df)))
+                }));
             if exhaustive {
                 searcher.collect_exhaustive(&query, &mut top, (i as u64) << 32);
             } else {
@@ -584,6 +774,20 @@ impl Reader {
         top.into_sorted().into_iter().map(|r| self.hit(r)).collect()
     }
 
+    /// Documents of segment `i` that `filter` or a deletion rules out; `None` when that is all.
+    fn excluded(&self, i: usize, filter: &Filter) -> Option<Vec<u64>> {
+        let (segment, deletes) = &self.segments[i];
+        let mut bits = filter.allowed(segment);
+        if let Some(deletes) = deletes {
+            bits.iter_mut().zip(deletes).for_each(|(w, d)| *w &= !d);
+        }
+        if bits.iter().all(|&w| w == 0) {
+            return None;
+        }
+        bits.iter_mut().for_each(|w| *w = !*w);
+        Some(bits)
+    }
+
     fn hit(&self, ranked: Ranked) -> SearchHit {
         let segment = &self.segments[(ranked.position >> 32) as usize].0;
         SearchHit {
@@ -591,4 +795,12 @@ impl Reader {
             score: ranked.score,
         }
     }
+}
+
+/// Every term in every field, weighted by both.
+fn expand<'a>(terms: &[(&'a str, f32)], fields: &[(&'a str, f32)]) -> Vec<(&'a str, &'a str, f32)> {
+    fields
+        .iter()
+        .flat_map(|&(f, boost)| terms.iter().map(move |&(t, w)| (f, t, w * boost)))
+        .collect()
 }

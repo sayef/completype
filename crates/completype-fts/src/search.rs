@@ -51,7 +51,7 @@ pub(crate) struct TopK {
 impl TopK {
     pub fn new(limit: usize) -> Self {
         Self {
-            heap: BinaryHeap::with_capacity(limit + 1),
+            heap: BinaryHeap::with_capacity(limit.min(4096) + 1),
             limit,
         }
     }
@@ -90,23 +90,38 @@ impl TopK {
 pub(crate) struct QueryTerm {
     info: TermInfo,
     numerator: f32,
+    field: u8,
 }
 
-/// Collection statistics BM25 scores against, possibly spanning several segments.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Collection {
+/// Statistics of one text field, possibly spanning several segments.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FieldStats {
+    /// Documents with the field.
     pub docs: u64,
     pub tokens: u64,
 }
 
+/// Collection statistics BM25 scores against, for each text field of one segment.
+#[derive(Clone, Debug)]
+pub(crate) struct Collection {
+    pub fields: Vec<FieldStats>,
+}
+
 impl Collection {
     pub fn of(segment: &Segment) -> Self {
-        Self {
-            docs: segment.len() as u64,
-            tokens: segment.total_tokens(),
-        }
+        let fields = segment
+            .text_fields()
+            .iter()
+            .map(|f| FieldStats {
+                docs: u64::from(f.docs),
+                tokens: f.tokens,
+            })
+            .collect();
+        Self { fields }
     }
+}
 
+impl FieldStats {
     fn average(&self) -> f32 {
         if self.docs == 0 {
             1.0
@@ -137,20 +152,40 @@ fn saturation_table(lengths: &[f32; 256]) -> Box<[[f32; 256]; TABLE_TF + 1]> {
     }))
 }
 
+/// Length normalisation, saturations and stored-bound decoding for one text field.
+struct Scoring {
+    lengths: [f32; 256],
+    saturations: Box<[[f32; 256]; TABLE_TF + 1]>,
+    stored: [f32; 256],
+}
+
+impl Scoring {
+    fn new(segment: FieldStats, collection: FieldStats) -> Box<Self> {
+        let lengths = length_table(collection.average());
+        Box::new(Self {
+            saturations: saturation_table(&lengths),
+            lengths,
+            stored: stored_bounds(segment.average(), collection.average()),
+        })
+    }
+
+    #[inline(always)]
+    fn saturation(&self, tf: u32, norm: u8) -> f32 {
+        match self.saturations.get(tf as usize) {
+            Some(row) => row[usize::from(norm)],
+            None => saturation(tf, self.lengths[usize::from(norm)]),
+        }
+    }
+}
+
 /// A window's score bound for a term: stored, or exact for a single posting.
 #[inline(always)]
-fn bound(
-    numerator: f32,
-    window: &Window,
-    norms: &[u8],
-    lengths: &[f32; 256],
-    stored: &[f32; 256],
-) -> f32 {
+fn bound(numerator: f32, window: &Window, norms: &[u8], scoring: &Scoring) -> f32 {
     if window.count == 1 {
         let doc = window.id as usize * WINDOW + usize::from(window.single.0);
-        numerator * saturation(window.single.1, lengths[usize::from(norms[doc])])
+        numerator * saturation(window.single.1, scoring.lengths[usize::from(norms[doc])])
     } else {
-        numerator * stored[usize::from(window.bound)]
+        numerator * scoring.stored[usize::from(window.bound)]
     }
 }
 
@@ -187,9 +222,8 @@ pub struct Searcher<'s> {
     segment: &'s Segment,
     collection: Collection,
     deleted: Option<&'s [u64]>,
-    lengths: [f32; 256],
-    saturations: Box<[[f32; 256]; TABLE_TF + 1]>,
-    stored: [f32; 256],
+    /// Per text field of the segment, built for the fields a query uses.
+    scoring: Vec<Option<Box<Scoring>>>,
     bounds: Vec<f32>,
     present: Vec<u64>,
     touched: Vec<u32>,
@@ -212,15 +246,12 @@ impl<'s> Searcher<'s> {
         collection: Collection,
         deleted: Option<&'s [u64]>,
     ) -> Self {
-        let average = collection.average();
         let windows = segment.windows();
         Self {
             segment,
+            scoring: (0..collection.fields.len()).map(|_| None).collect(),
             collection,
             deleted,
-            lengths: length_table(average),
-            saturations: saturation_table(&length_table(average)),
-            stored: stored_bounds(Collection::of(segment).average(), average),
             bounds: vec![0.0; windows],
             present: vec![0; windows],
             touched: Vec::new(),
@@ -232,37 +263,75 @@ impl<'s> Searcher<'s> {
         }
     }
 
-    fn prepare<'a>(&self, terms: impl IntoIterator<Item = (&'a str, f32)>) -> Vec<QueryTerm> {
-        let terms = terms.into_iter().map(|(term, weight)| (term, weight, None));
+    /// Each weighted term in every text field.
+    fn prepare<'a>(&mut self, terms: impl IntoIterator<Item = (&'a str, f32)>) -> Vec<QueryTerm> {
+        let fields = self.segment.text_fields().len() as u8;
+        let terms: Vec<_> = terms.into_iter().collect();
+        let terms = (0..fields).flat_map(|f| terms.iter().map(move |&(t, w)| (f, t, w, None)));
+        self.prepare_with(terms.collect::<Vec<_>>())
+    }
+
+    fn prepare_fields<'a>(
+        &mut self,
+        terms: impl IntoIterator<Item = (&'a str, &'a str, f32)>,
+    ) -> Vec<QueryTerm> {
+        let segment = self.segment;
+        let terms = terms
+            .into_iter()
+            .filter_map(|(field, t, w)| Some((segment.text_field(field)?, t, w, None)));
         self.prepare_with(terms)
     }
 
-    /// Query terms in this segment; `df` overrides the segment's document frequency.
+    /// Query terms as `(field, term, weight, df)`; `df` overrides the segment's document frequency.
     pub(crate) fn prepare_with<'a>(
-        &self,
-        terms: impl IntoIterator<Item = (&'a str, f32, Option<u64>)>,
+        &mut self,
+        terms: impl IntoIterator<Item = (u8, &'a str, f32, Option<u64>)>,
     ) -> Vec<QueryTerm> {
+        let own = Collection::of(self.segment);
         terms
             .into_iter()
-            .filter(|&(_, weight, _)| weight > 0.0 && weight <= 1e30)
-            .filter_map(|(term, weight, df)| {
-                let info = self.segment.term(term)?;
-                let idf = self.collection.idf(df.unwrap_or(u64::from(info.df)));
+            .filter(|&(_, _, weight, _)| weight > 0.0 && weight <= 1e30)
+            .filter_map(|(field, term, weight, df)| {
+                let info = self.segment.term(field, term)?;
+                let f = usize::from(field);
+                let stats = self.collection.fields[f];
+                self.scoring[f].get_or_insert_with(|| Scoring::new(own.fields[f], stats));
+                let idf = stats.idf(df.unwrap_or(u64::from(info.df)));
                 Some(QueryTerm {
                     info,
                     numerator: weight * idf * (K1 + 1.0),
+                    field,
                 })
             })
             .collect()
     }
 
-    /// Exact BM25 top `limit` for weighted terms, best first, ties by document order.
+    #[inline(always)]
+    fn scoring(&self, field: u8) -> &Scoring {
+        self.scoring[usize::from(field)]
+            .as_deref()
+            .expect("prepared fields have scoring")
+    }
+
+    /// Exact BM25 top `limit` for weighted terms in every text field, best first, ties by document order.
     pub fn search<'a>(
         &mut self,
         terms: impl IntoIterator<Item = (&'a str, f32)>,
         limit: usize,
     ) -> Vec<Hit> {
         let query = self.prepare(terms);
+        let mut top = TopK::new(limit);
+        self.collect(&query, &mut top, 0);
+        top.into_hits()
+    }
+
+    /// Exact BM25 top `limit` for `(field, term, weight)`, summed over fields.
+    pub fn search_fields<'a>(
+        &mut self,
+        terms: impl IntoIterator<Item = (&'a str, &'a str, f32)>,
+        limit: usize,
+    ) -> Vec<Hit> {
+        let query = self.prepare_fields(terms);
         let mut top = TopK::new(limit);
         self.collect(&query, &mut top, 0);
         top.into_hits()
@@ -292,14 +361,6 @@ impl<'s> Searcher<'s> {
         self.touched.clear();
     }
 
-    #[inline(always)]
-    fn saturation(&self, tf: u32, norm: u8) -> f32 {
-        match self.saturations.get(tf as usize) {
-            Some(row) => row[usize::from(norm)],
-            None => saturation(tf, self.lengths[usize::from(norm)]),
-        }
-    }
-
     pub fn stats(&self) -> Stats {
         self.stats
     }
@@ -318,16 +379,21 @@ impl<'s> Searcher<'s> {
             list.clear();
             list.reserve(term.info.windows as usize);
             self.stats.headers_read += term.info.windows as usize;
-            let norms = self.segment.norms();
+            let norms = self.segment.norms(term.field);
+            let scoring = self.scoring[usize::from(term.field)]
+                .as_deref()
+                .expect("prepared fields have scoring");
             for window in self.segment.headers(&term.info) {
                 let w = window.id as usize;
+                if self.deleted.is_some_and(|d| window_bits(d, w) == u128::MAX) {
+                    continue;
+                }
                 if self.present[w] == 0 {
                     self.touched.push(window.id);
                 }
                 self.present[w] |= 1 << t;
                 self.slots[t * windows + w] = list.len() as u32;
-                self.bounds[w] +=
-                    bound(term.numerator, &window, norms, &self.lengths, &self.stored);
+                self.bounds[w] += bound(term.numerator, &window, norms, scoring);
                 list.push(window);
             }
         }
@@ -408,7 +474,7 @@ impl<'s> Searcher<'s> {
         let live = self
             .deleted
             .map_or(u128::MAX, |d| !window_bits(d, w as usize));
-        let norms = &self.segment.norms()[base..(base + WINDOW).min(self.segment.len())];
+        let end = (base + WINDOW).min(self.segment.len());
         local.clear();
         let mut bits = self.present[w as usize];
         while bits != 0 {
@@ -416,12 +482,12 @@ impl<'s> Searcher<'s> {
             bits &= bits - 1;
             let window =
                 self.lists[t][self.slots[t * self.segment.windows() + w as usize] as usize];
+            let field = query[t].field;
             let bound = bound(
                 query[t].numerator,
                 &window,
-                self.segment.norms(),
-                &self.lengths,
-                &self.stored,
+                self.segment.norms(field),
+                self.scoring(field),
             );
             local.push((t, bound, 0, window));
         }
@@ -453,12 +519,14 @@ impl<'s> Searcher<'s> {
         for &(t, _, mask, window) in local.iter() {
             let term = &query[t];
             let (_, tfs) = window.decode(self.segment.bodies(&term.info));
+            let norms = &self.segment.norms(term.field)[base..end];
+            let scoring = self.scoring(term.field);
             if essential & (1 << t) != 0 && live == u128::MAX {
                 let (mut m, mut rank) = (mask, 0);
                 while m != 0 {
                     let off = m.trailing_zeros() as usize;
                     m &= m - 1;
-                    scores[off] += term.numerator * self.saturation(tfs.get(rank), norms[off]);
+                    scores[off] += term.numerator * scoring.saturation(tfs.get(rank), norms[off]);
                     rank += 1;
                     scored += 1;
                 }
@@ -468,7 +536,7 @@ impl<'s> Searcher<'s> {
                     let off = m.trailing_zeros() as usize;
                     m &= m - 1;
                     let rank = (mask & ((1_u128 << off) - 1)).count_ones() as usize;
-                    scores[off] += term.numerator * self.saturation(tfs.get(rank), norms[off]);
+                    scores[off] += term.numerator * scoring.saturation(tfs.get(rank), norms[off]);
                     scored += 1;
                 }
             }
@@ -494,6 +562,16 @@ impl<'s> Searcher<'s> {
         self.exhaustive(&query, limit)
     }
 
+    /// [`Searcher::search_fields`] scoring every posting.
+    pub fn search_fields_exhaustive<'a>(
+        &mut self,
+        terms: impl IntoIterator<Item = (&'a str, &'a str, f32)>,
+        limit: usize,
+    ) -> Vec<Hit> {
+        let query = self.prepare_fields(terms);
+        self.exhaustive(&query, limit)
+    }
+
     fn exhaustive(&self, query: &[QueryTerm], limit: usize) -> Vec<Hit> {
         let mut top = TopK::new(limit);
         self.exhaustive_into(query, &mut top, 0);
@@ -508,9 +586,10 @@ impl<'s> Searcher<'s> {
         if top.limit == 0 {
             return;
         }
-        let norms = self.segment.norms();
         let mut scores = vec![0.0_f32; self.segment.len()];
         for term in query {
+            let norms = self.segment.norms(term.field);
+            let scoring = self.scoring(term.field);
             let bodies = self.segment.bodies(&term.info);
             for window in self.segment.headers(&term.info) {
                 let (mut mask, tfs) = window.decode(bodies);
@@ -519,7 +598,7 @@ impl<'s> Searcher<'s> {
                 while mask != 0 {
                     let doc = start + mask.trailing_zeros() as usize;
                     mask &= mask - 1;
-                    scores[doc] += term.numerator * self.saturation(tfs.get(rank), norms[doc]);
+                    scores[doc] += term.numerator * scoring.saturation(tfs.get(rank), norms[doc]);
                     rank += 1;
                 }
             }

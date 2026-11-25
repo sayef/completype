@@ -185,3 +185,54 @@ fn reordering_a_corpus_large_enough_to_run_in_parallel_keeps_every_document() {
         searcher.search_exhaustive([("a5", 1.0), ("b7", 1.0)], 50)
     );
 }
+
+#[test]
+fn pruned_search_over_weighted_fields_equals_exhaustive_scoring() {
+    use completype_fts::{Analyzer, Document};
+    for reorder in [false, true] {
+        let mut random = Random(21);
+        let mut builder = SegmentBuilder::default();
+        builder.reorder(reorder);
+        let mut words = |n: usize, vocabulary: usize| {
+            let len = random.below(n + 1);
+            (0..len)
+                .map(|_| {
+                    let r = random.below(vocabulary);
+                    format!("w{}", random.below(r + 1))
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        for d in 0..6_000 {
+            let document = Document::new()
+                .text("title", words(5, 200))
+                .text("body", words(80, 400))
+                .text("tags", words(2, 50));
+            builder.add_document(format!("d{d}"), &document, &Analyzer::default());
+        }
+        let segment = Segment::from_bytes(builder.finish()).unwrap();
+        let mut searcher = Searcher::new(&segment);
+        let mut random = Random(77);
+        let fields = ["title", "body", "tags", "missing"];
+        let terms: Vec<String> = (0..400).map(|i| format!("w{i}")).collect();
+        for _ in 0..300 {
+            let query: Vec<(&str, &str, f32)> = (0..1 + random.below(10))
+                .map(|_| {
+                    let rank = random.below(terms.len());
+                    (
+                        fields[random.below(fields.len())],
+                        terms[random.below(rank + 1)].as_str(),
+                        [0.3, 1.0, 4.0][random.below(3)],
+                    )
+                })
+                .collect();
+            for k in [1, 10, 100] {
+                assert_eq!(
+                    searcher.search_fields(query.iter().copied(), k),
+                    searcher.search_fields_exhaustive(query.iter().copied(), k),
+                    "{query:?} k {k}"
+                );
+            }
+        }
+    }
+}
