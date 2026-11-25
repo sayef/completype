@@ -11,22 +11,35 @@ pub(crate) struct Match {
 struct Walk<'w> {
     word: &'w [char],
     max: u8,
+    keep_first: bool,
     path: Vec<u8>,
     chars: Vec<char>,
-    rows: Vec<Vec<u8>>,
+    /// Alignment rows, `word.len() + 1` cells each, one per character of `chars` plus the first.
+    rows: Vec<u8>,
     out: Vec<Match>,
 }
 
 /// Every term within `max` edits of `word`, by optimal string alignment.
+#[cfg(test)]
 pub(crate) fn within<D: AsRef<[u8]>>(fst: &Fst<D>, word: &str, max: u8) -> Vec<Match> {
+    within_from(fst, word, max, false)
+}
+
+/// [`within`], optionally only among terms starting with the same character as `word`.
+pub(crate) fn within_from<D: AsRef<[u8]>>(
+    fst: &Fst<D>,
+    word: &str,
+    max: u8,
+    keep_first: bool,
+) -> Vec<Match> {
     let word: Vec<char> = word.chars().collect();
-    let first = (0..=word.len()).map(|j| j.min(255) as u8).collect();
     let mut walk = Walk {
         word: &word,
         max,
-        path: Vec::new(),
-        chars: Vec::new(),
-        rows: vec![first],
+        keep_first: keep_first && !word.is_empty(),
+        path: Vec::with_capacity(64),
+        chars: Vec::with_capacity(48),
+        rows: (0..=word.len()).map(|j| j.min(255) as u8).collect(),
         out: Vec::new(),
     };
     walk.visit(fst, fst.root(), 0, 0);
@@ -34,65 +47,75 @@ pub(crate) fn within<D: AsRef<[u8]>>(fst: &Fst<D>, word: &str, max: u8) -> Vec<M
 }
 
 impl Walk<'_> {
+    fn stride(&self) -> usize {
+        self.word.len() + 1
+    }
+
     fn visit<D: AsRef<[u8]>>(&mut self, fst: &Fst<D>, node: Node<'_>, output: u64, pending: usize) {
         if node.is_final() && pending == 0 {
-            let distance = self.rows.last().unwrap()[self.word.len()];
+            let distance = *self.rows.last().unwrap();
             if distance <= self.max {
                 let term = String::from_utf8(self.path.clone()).expect("terms are UTF-8");
+                let value = output + node.final_output().value();
                 self.out.push(Match {
                     term,
                     distance,
-                    value: output + node.final_output().value(),
+                    value,
                 });
             }
         }
         for t in node.transitions() {
             self.path.push(t.inp);
-            let next = fst.node(t.addr);
             let output = output + t.out.value();
             let start = self.path.len() - pending - 1;
             match std::str::from_utf8(&self.path[start..]) {
                 Ok(s) => {
                     let c = s.chars().next().unwrap();
                     if self.step(c) {
-                        self.visit(fst, next, output, 0);
-                        self.rows.pop();
+                        self.visit(fst, fst.node(t.addr), output, 0);
                     }
+                    self.rows.truncate(self.rows.len() - self.stride());
                     self.chars.pop();
                 }
-                Err(e) if e.error_len().is_none() => self.visit(fst, next, output, pending + 1),
+                Err(e) if e.error_len().is_none() => {
+                    self.visit(fst, fst.node(t.addr), output, pending + 1)
+                }
                 Err(_) => {}
             }
             self.path.pop();
         }
     }
 
-    /// Pushes the alignment row after `c`; false once no extension can come within `max`.
+    /// Appends the alignment row after `c`; false once no extension can come within `max`.
     fn step(&mut self, c: char) -> bool {
         self.chars.push(c);
-        let depth = self.chars.len();
-        let previous = &self.rows[depth - 1];
-        let mut row = Vec::with_capacity(previous.len());
-        row.push(depth.min(255) as u8);
-        for j in 1..=self.word.len() {
-            let mut cost = (previous[j] + 1)
-                .min(row[j - 1] + 1)
+        let (depth, stride) = (self.chars.len(), self.stride());
+        if depth == 1 && self.keep_first && c != self.word[0] {
+            self.rows.resize(self.rows.len() + stride, 0);
+            return false;
+        }
+        let at = self.rows.len();
+        self.rows.resize(at + stride, 0);
+        let (before, row) = self.rows.split_at_mut(at);
+        let previous = &before[at - stride..];
+        row[0] = depth.min(255) as u8;
+        let mut best = row[0];
+        for j in 1..stride {
+            let mut cost = previous[j]
+                .saturating_add(1)
+                .min(row[j - 1].saturating_add(1))
                 .min(previous[j - 1] + u8::from(self.word[j - 1] != c));
             if depth >= 2
                 && j >= 2
                 && self.word[j - 2] == c
                 && self.word[j - 1] == self.chars[depth - 2]
             {
-                cost = cost.min(self.rows[depth - 2][j - 2] + 1);
+                cost = cost.min(before[at - 2 * stride + j - 2] + 1);
             }
-            row.push(cost);
+            row[j] = cost;
+            best = best.min(cost);
         }
-        let alive = row.iter().min().is_some_and(|&m| m <= self.max);
-        self.rows.push(row);
-        if !alive {
-            self.rows.pop();
-        }
-        alive
+        best <= self.max
     }
 }
 

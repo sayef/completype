@@ -7,6 +7,10 @@ use crate::segment::{Segment, TermInfo};
 /// Most terms a pruned query takes; longer queries are scored exhaustively.
 const MAX_TERMS: usize = 64;
 const BUCKETS: usize = 1024;
+/// Windows scored best first before the rest are swept in document order.
+const EAGER: usize = 128;
+/// Marks a scored window's bound, below any threshold.
+const DONE: f32 = -1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
@@ -118,9 +122,19 @@ impl Collection {
 }
 
 #[inline(always)]
-fn contribution(numerator: f32, tf: u32, length: f32) -> f32 {
+fn saturation(tf: u32, length: f32) -> f32 {
     let tf = tf as f32;
-    numerator * tf / (tf + length)
+    tf / (tf + length)
+}
+
+/// Term frequencies up to this read their saturation from a table instead of dividing.
+const TABLE_TF: usize = 16;
+
+/// `tf / (tf + length)` for each small `tf` and norm byte, as [`saturation`] computes it.
+fn saturation_table(lengths: &[f32; 256]) -> Box<[[f32; 256]; TABLE_TF + 1]> {
+    Box::new(std::array::from_fn(|tf| {
+        std::array::from_fn(|n| saturation(tf as u32, lengths[n]))
+    }))
 }
 
 /// A window's score bound for a term: stored, or exact for a single posting.
@@ -134,7 +148,7 @@ fn bound(
 ) -> f32 {
     if window.count == 1 {
         let doc = window.id as usize * WINDOW + usize::from(window.single.0);
-        contribution(numerator, window.single.1, lengths[usize::from(norms[doc])])
+        numerator * saturation(window.single.1, lengths[usize::from(norms[doc])])
     } else {
         numerator * stored[usize::from(window.bound)]
     }
@@ -163,6 +177,9 @@ pub struct Stats {
     pub windows_touched: usize,
     pub windows_scored: usize,
     pub headers_read: usize,
+    pub postings_scored: usize,
+    pub scan_micros: u64,
+    pub score_micros: u64,
 }
 
 /// Runs queries against one segment, reusing its scratch space between them.
@@ -171,11 +188,14 @@ pub struct Searcher<'s> {
     collection: Collection,
     deleted: Option<&'s [u64]>,
     lengths: [f32; 256],
+    saturations: Box<[[f32; 256]; TABLE_TF + 1]>,
     stored: [f32; 256],
     bounds: Vec<f32>,
     present: Vec<u64>,
     touched: Vec<u32>,
     lists: Vec<Vec<Window>>,
+    /// `slots[t * windows + w]`: where window `w` sits in `lists[t]`, valid while `present` says so.
+    slots: Vec<u32>,
     order: Vec<u32>,
     counts: Vec<u32>,
     stats: Stats,
@@ -199,11 +219,13 @@ impl<'s> Searcher<'s> {
             collection,
             deleted,
             lengths: length_table(average),
+            saturations: saturation_table(&length_table(average)),
             stored: stored_bounds(Collection::of(segment).average(), average),
             bounds: vec![0.0; windows],
             present: vec![0; windows],
             touched: Vec::new(),
             lists: Vec::new(),
+            slots: Vec::new(),
             order: Vec::new(),
             counts: vec![0; BUCKETS + 1],
             stats: Stats::default(),
@@ -256,14 +278,26 @@ impl<'s> Searcher<'s> {
             return self.exhaustive_into(query, top, base);
         }
         let guard = 1.0 + 8.0 * (query.len() as f32 + 2.0) * f32::EPSILON;
+        let start = std::time::Instant::now();
         self.scan(query);
+        self.stats.scan_micros = start.elapsed().as_micros() as u64;
         self.stats.windows_touched = self.touched.len();
+        let start = std::time::Instant::now();
         self.best_first(query, top, base, guard);
+        self.stats.score_micros = start.elapsed().as_micros() as u64;
         for &w in &self.touched {
             self.bounds[w as usize] = 0.0;
             self.present[w as usize] = 0;
         }
         self.touched.clear();
+    }
+
+    #[inline(always)]
+    fn saturation(&self, tf: u32, norm: u8) -> f32 {
+        match self.saturations.get(tf as usize) {
+            Some(row) => row[usize::from(norm)],
+            None => saturation(tf, self.lengths[usize::from(norm)]),
+        }
     }
 
     pub fn stats(&self) -> Stats {
@@ -274,6 +308,10 @@ impl<'s> Searcher<'s> {
     fn scan(&mut self, query: &[QueryTerm]) {
         if self.lists.len() < query.len() {
             self.lists.resize_with(query.len(), Vec::new);
+        }
+        let windows = self.segment.windows();
+        if self.slots.len() < query.len() * windows {
+            self.slots.resize(query.len() * windows, 0);
         }
         for (t, term) in query.iter().enumerate() {
             let list = &mut self.lists[t];
@@ -287,6 +325,7 @@ impl<'s> Searcher<'s> {
                     self.touched.push(window.id);
                 }
                 self.present[w] |= 1 << t;
+                self.slots[t * windows + w] = list.len() as u32;
                 self.bounds[w] +=
                     bound(term.numerator, &window, norms, &self.lengths, &self.stored);
                 list.push(window);
@@ -318,19 +357,40 @@ impl<'s> Searcher<'s> {
             next[b] += 1;
         }
         let mut local = Vec::with_capacity(query.len());
-        for b in (0..BUCKETS).rev() {
+        'buckets: for b in (0..BUCKETS).rev() {
             let ceiling = (b + 1) as f32 / scale * (1.0 + 1e-5);
             if ceiling * guard < top.threshold() {
-                break;
+                return;
             }
             for i in self.counts[b]..self.counts[b + 1] {
+                if self.stats.windows_scored == EAGER {
+                    break 'buckets;
+                }
                 let w = self.order[i as usize];
                 if self.bounds[w as usize] * guard < top.threshold() {
                     continue;
                 }
                 self.stats.windows_scored += 1;
-                self.window(query, w, guard, top, base, &mut local);
+                self.stats.postings_scored += self.window(query, w, guard, top, base, &mut local);
+                self.bounds[w as usize] = DONE;
             }
+        }
+        // The best windows set the threshold; the rest go in document order, which reads memory in sequence.
+        self.order.clear();
+        self.order.extend(
+            self.touched
+                .iter()
+                .copied()
+                .filter(|&w| self.bounds[w as usize] * guard >= top.threshold()),
+        );
+        self.order.sort_unstable();
+        for i in 0..self.order.len() {
+            let w = self.order[i];
+            if self.bounds[w as usize] * guard < top.threshold() {
+                continue;
+            }
+            self.stats.windows_scored += 1;
+            self.stats.postings_scored += self.window(query, w, guard, top, base, &mut local);
         }
     }
 
@@ -342,7 +402,8 @@ impl<'s> Searcher<'s> {
         top: &mut TopK,
         segment_base: u64,
         local: &mut Vec<(usize, f32, u128, Window)>,
-    ) {
+    ) -> usize {
+        let mut scored = 0;
         let base = w as usize * WINDOW;
         let live = self
             .deleted
@@ -353,8 +414,8 @@ impl<'s> Searcher<'s> {
         while bits != 0 {
             let t = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            let list = &self.lists[t];
-            let window = list[list.partition_point(|x| x.id < w)];
+            let window =
+                self.lists[t][self.slots[t * self.segment.windows() + w as usize] as usize];
             let bound = bound(
                 query[t].numerator,
                 &window,
@@ -368,16 +429,16 @@ impl<'s> Searcher<'s> {
         let threshold = top.threshold();
         let mut essential = u64::MAX;
         if threshold > 0.0 {
-            let mut by_bound: Vec<_> = (0..local.len()).collect();
-            by_bound.sort_unstable_by(|&a, &b| local[a].1.total_cmp(&local[b].1));
+            local.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
             let mut optional = 0.0;
-            for i in by_bound {
-                if (optional + local[i].1) * guard >= threshold {
+            for entry in local.iter() {
+                if (optional + entry.1) * guard >= threshold {
                     break;
                 }
-                optional += local[i].1;
-                essential &= !(1 << local[i].0);
+                optional += entry.1;
+                essential &= !(1 << entry.0);
             }
+            local.sort_unstable_by_key(|entry| entry.0);
         }
         let mut candidates = 0_u128;
         for entry in local.iter_mut() {
@@ -397,9 +458,9 @@ impl<'s> Searcher<'s> {
                 while m != 0 {
                     let off = m.trailing_zeros() as usize;
                     m &= m - 1;
-                    let length = self.lengths[usize::from(norms[off])];
-                    scores[off] += contribution(term.numerator, tfs.get(rank), length);
+                    scores[off] += term.numerator * self.saturation(tfs.get(rank), norms[off]);
                     rank += 1;
+                    scored += 1;
                 }
             } else {
                 let mut m = mask & candidates;
@@ -407,8 +468,8 @@ impl<'s> Searcher<'s> {
                     let off = m.trailing_zeros() as usize;
                     m &= m - 1;
                     let rank = (mask & ((1_u128 << off) - 1)).count_ones() as usize;
-                    let length = self.lengths[usize::from(norms[off])];
-                    scores[off] += contribution(term.numerator, tfs.get(rank), length);
+                    scores[off] += term.numerator * self.saturation(tfs.get(rank), norms[off]);
+                    scored += 1;
                 }
             }
         }
@@ -420,6 +481,7 @@ impl<'s> Searcher<'s> {
                 position: segment_base + (base + off) as u64,
             });
         }
+        scored
     }
 
     /// Scores every posting; the reference the pruned search must equal.
@@ -457,8 +519,7 @@ impl<'s> Searcher<'s> {
                 while mask != 0 {
                     let doc = start + mask.trailing_zeros() as usize;
                     mask &= mask - 1;
-                    let length = self.lengths[usize::from(norms[doc])];
-                    scores[doc] += contribution(term.numerator, tfs.get(rank), length);
+                    scores[doc] += term.numerator * self.saturation(tfs.get(rank), norms[doc]);
                     rank += 1;
                 }
             }

@@ -2,7 +2,11 @@
 
 use std::cell::RefCell;
 
+use rayon::prelude::*;
+
 const ITERATIONS: usize = 12;
+/// Partitions at least this large compute move gains in parallel chunks of this size.
+const PARALLEL_FROM: usize = 16_384;
 const LEAF: usize = crate::format::WINDOW;
 
 /// Documents as term lists, for terms in more than one document.
@@ -108,24 +112,35 @@ fn partition(
                 .iter()
                 .for_each(|&t| right[t as usize] += 1);
         }
+        let (left, right) = (&*left, &*right);
         gains_a.clear();
-        gains_a.extend(docs[..mid].iter().map(|&d| {
-            let gain = forward.terms(d).iter().map(|&t| {
-                let (l, r) = (left[t as usize], right[t as usize]);
-                cost(l, r) - cost(l - 1, r + 1)
-            });
-            (gain.sum(), d)
-        }));
+        gains_a.par_extend(
+            docs[..mid]
+                .par_iter()
+                .with_min_len(PARALLEL_FROM)
+                .map(|&d| {
+                    let gain = forward.terms(d).iter().map(|&t| {
+                        let (l, r) = (left[t as usize], right[t as usize]);
+                        cost(l, r) - cost(l - 1, r + 1)
+                    });
+                    (gain.sum(), d)
+                }),
+        );
         gains_b.clear();
-        gains_b.extend(docs[mid..].iter().map(|&d| {
-            let gain = forward.terms(d).iter().map(|&t| {
-                let (l, r) = (left[t as usize], right[t as usize]);
-                cost(l, r) - cost(l + 1, r - 1)
-            });
-            (gain.sum(), d)
-        }));
-        gains_a.sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
-        gains_b.sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
+        gains_b.par_extend(
+            docs[mid..]
+                .par_iter()
+                .with_min_len(PARALLEL_FROM)
+                .map(|&d| {
+                    let gain = forward.terms(d).iter().map(|&t| {
+                        let (l, r) = (left[t as usize], right[t as usize]);
+                        cost(l, r) - cost(l + 1, r - 1)
+                    });
+                    (gain.sum(), d)
+                }),
+        );
+        gains_a.par_sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
+        gains_b.par_sort_unstable_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
         let swaps = gains_a
             .iter()
             .zip(&gains_b)

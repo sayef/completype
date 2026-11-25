@@ -25,6 +25,7 @@ pub struct Index {
     dir: PathBuf,
     analyzer: Analyzer,
     reorder: bool,
+    first_letter_typos: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,6 +124,7 @@ impl Index {
             dir,
             analyzer: Analyzer::default(),
             reorder: false,
+            first_letter_typos: false,
         })
     }
 
@@ -134,6 +136,13 @@ impl Index {
     /// Reorders documents in every segment written: smaller and faster, slower to build.
     pub fn with_reordering(mut self, on: bool) -> Self {
         self.reorder = on;
+        self
+    }
+
+    /// Lets corrections change a term's first character; by default they keep it, as Lucene's
+    /// spell checker does, which makes them several times faster.
+    pub fn with_first_letter_typos(mut self, on: bool) -> Self {
+        self.first_letter_typos = on;
         self
     }
 
@@ -184,6 +193,7 @@ impl Index {
         };
         Ok(Reader {
             analyzer: self.analyzer.clone(),
+            first_letter_typos: self.first_letter_typos,
             segments,
             collection,
         })
@@ -396,6 +406,7 @@ fn merge_segments(sources: &[(Segment, Option<Vec<u64>>)], mut builder: SegmentB
 /// A consistent view of the index at one commit.
 pub struct Reader {
     analyzer: Analyzer,
+    first_letter_typos: bool,
     segments: Vec<(Segment, Option<Vec<u64>>)>,
     collection: Collection,
 }
@@ -462,12 +473,24 @@ impl Reader {
         if df >= RARE_DF || len < 3 {
             return vec![(term.to_owned(), 1.0)];
         }
-        let max = if len <= 4 { 1 } else { 2 };
         let mut found: FxHashMap<String, (u8, u64)> = FxHashMap::default();
-        for (segment, _) in &self.segments {
-            for m in crate::fuzzy::within(segment.dictionary(), term, max) {
-                let entry = found.entry(m.term).or_insert((m.distance, 0));
-                entry.1 += u64::from(segment.info(m.value).df);
+        // The closest spelling wins, so two edits are searched only when one finds nothing.
+        for max in [1, 2].into_iter().take(if len <= 4 { 1 } else { 2 }) {
+            for (segment, _) in &self.segments {
+                for m in crate::fuzzy::within_from(
+                    segment.dictionary(),
+                    term,
+                    max,
+                    !self.first_letter_typos,
+                ) {
+                    if m.term != term {
+                        let entry = found.entry(m.term).or_insert((m.distance, 0));
+                        entry.1 += u64::from(segment.info(m.value).df);
+                    }
+                }
+            }
+            if !found.is_empty() {
+                break;
             }
         }
         let best = found
