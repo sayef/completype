@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use completype_fts::{Searcher, Segment, SegmentBuilder};
 use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
+use tantivy::collector::Count;
+use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, TermQuery};
 use tantivy::schema::{IndexRecordOption, Schema, TextFieldIndexing, TextOptions};
 use tantivy::tokenizer::{TextAnalyzer, WhitespaceTokenizer};
 use tantivy::{doc, Index, Term};
@@ -35,6 +36,54 @@ fn rss_mib() -> f64 {
         .find_map(|l| l.strip_prefix("VmRSS:"))
         .and_then(|v| v.trim().trim_end_matches(" kB").trim().parse::<f64>().ok())
         .map_or(0.0, |kb| kb / 1024.0)
+}
+
+/// Positions-on segment for `pos` and `phrase`, with its build time and position bytes.
+fn positions_segment(corpus: &[(String, String)], work: &Path) -> Segment {
+    let start = Instant::now();
+    let path = work.join("pos.seg");
+    let mut builder = SegmentBuilder::default();
+    builder.positions(true);
+    for (id, text) in corpus {
+        builder.add(id.as_str(), text.split_ascii_whitespace());
+    }
+    builder.write(&path).unwrap();
+    let segment = Segment::open(&path).unwrap();
+    let sizes = segment.section_sizes();
+    let ids: usize = sizes[1..3].iter().map(|s| s.1).sum();
+    let positions: usize = sizes.iter().filter(|s| s.0.starts_with("position")).map(|s| s.1).sum();
+    let bytes = std::fs::metadata(&path).unwrap().len() as usize;
+    println!(
+        "pos: build {:.1} s, segment {:.1} MiB, {:.1} MiB without ids, positions {:.1} MiB",
+        start.elapsed().as_secs_f64(),
+        bytes as f64 / 1048576.0,
+        (bytes - ids) as f64 / 1048576.0,
+        positions as f64 / 1048576.0
+    );
+    std::fs::remove_file(&path).unwrap();
+    segment
+}
+
+/// 2- and 3-word phrases cut from random documents.
+fn sample_phrases(corpus: &[(String, String)], count: usize) -> Vec<Vec<String>> {
+    let mut state = 7_u64;
+    let mut next = |n: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % n as u64) as usize
+    };
+    let mut phrases = Vec::new();
+    while phrases.len() < count {
+        let words: Vec<&str> = corpus[next(corpus.len())].1.split_ascii_whitespace().collect();
+        let len = 2 + next(2);
+        if words.len() < len {
+            continue;
+        }
+        let start = next(words.len() - len + 1);
+        phrases.push(words[start..start + len].iter().map(|w| w.to_string()).collect());
+    }
+    phrases
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,6 +142,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::remove_file(&path).unwrap();
         segment
     });
+    let phrase_mode = engines.iter().any(|e| e == "phrase");
+    let pos = (phrase_mode || engines.iter().any(|e| e == "pos")).then(|| positions_segment(&corpus, &work));
+    let phrases = if phrase_mode { sample_phrases(&corpus, 256) } else { Vec::new() };
     let poc = engines.iter().any(|e| e == "poc").then(|| {
         let before = rss_mib();
         let start = Instant::now();
@@ -133,6 +185,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         searcher.segment_readers().len(),
         dir_size(&tantivy_dir) as f64 / 1048576.0
     );
+    let tantivy_pos = phrase_mode.then(|| {
+        let dir = work.join("tantivy-pos");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut schema = Schema::builder();
+        let indexing =
+            TextFieldIndexing::default().set_tokenizer("ws").set_index_option(IndexRecordOption::WithFreqsAndPositions);
+        let body = schema.add_text_field("body", TextOptions::default().set_indexing_options(indexing));
+        let start = Instant::now();
+        let index = Index::create_in_dir(&dir, schema.build()).unwrap();
+        index.tokenizers().register("ws", TextAnalyzer::builder(WhitespaceTokenizer::default()).build());
+        let mut writer = index.writer_with_num_threads(1, 500_000_000).unwrap();
+        for (_, text) in &corpus {
+            writer.add_document(doc!(body => text.as_str())).unwrap();
+        }
+        writer.commit().unwrap();
+        let ids = index.searchable_segment_ids().unwrap();
+        if ids.len() > 1 {
+            writer.merge(&ids).wait().unwrap();
+        }
+        writer.garbage_collect_files().wait().unwrap();
+        writer.wait_merging_threads().unwrap();
+        println!(
+            "tantivy with positions: build+merge {:.1} s, index {:.1} MiB",
+            start.elapsed().as_secs_f64(),
+            dir_size(&dir) as f64 / 1048576.0
+        );
+        (index.reader().unwrap().searcher(), body, dir)
+    });
     drop(corpus);
     println!("process RSS after building everything: {:.0} MiB (start {base_rss:.0})", rss_mib());
     let tantivy_queries: Vec<Box<dyn Query>> = weighted
@@ -150,6 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let mut new_searcher = Searcher::new(&segment);
+    let mut pos_searcher = pos.as_ref().map(Searcher::new);
     let mut bp_searcher = bp.as_ref().map(Searcher::new);
     if std::env::var_os("STATS").is_some() {
         let mut rows = Vec::new();
@@ -196,6 +278,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let w = &weighted;
             runs.push(("completype-fts reordered", Box::new(move |i| black_box(s.search(w[i].iter().copied(), k)).len())));
         }
+        if let Some(s) = pos_searcher.as_mut() {
+            let w = &weighted;
+            runs.push(("completype-fts +positions", Box::new(move |i| black_box(s.search(w[i].iter().copied(), k)).len())));
+        }
         if let Some(index) = &poc {
             let w = &weighted;
             runs.push(("poc", Box::new(move |i| black_box(index.search(w[i].iter().map(|&(t, x)| (t, f64::from(x))), k)).len())));
@@ -224,7 +310,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let _ = checked;
     }
+    if let (Some(s), Some((ts, body, dir))) = (pos_searcher.as_mut(), &tantivy_pos) {
+        phrase_latency(s, ts, *body, &phrases, rounds);
+        let _ = std::fs::remove_dir_all(dir);
+    }
     let _ = std::fs::remove_dir_all(&tantivy_dir);
     let _ = std::fs::remove_file(&segment_path);
     Ok(())
+}
+
+/// Phrase queries alone, exact and with slop 2, against Tantivy's `PhraseQuery`.
+fn phrase_latency(
+    searcher: &mut Searcher,
+    tantivy: &tantivy::Searcher,
+    body: tantivy::schema::Field,
+    phrases: &[Vec<String>],
+    rounds: usize,
+) {
+    let words: Vec<Vec<&str>> = phrases.iter().map(|p| p.iter().map(String::as_str).collect()).collect();
+    let mut matched = 0;
+    for (i, w) in words.iter().enumerate().take(64) {
+        let terms = w.iter().map(|t| Term::from_field_text(body, t)).collect();
+        let theirs = tantivy.search(&PhraseQuery::new(terms), &Count).unwrap();
+        let ours = searcher.search_phrases_exhaustive([], &[(w.as_slice(), 0, 1.0)], usize::MAX >> 1).len();
+        assert_eq!(ours, theirs, "phrase {i} {w:?} matches");
+        matched += ours;
+    }
+    println!("phrases: {} sampled, {matched} matches over the first 64, equal to Tantivy's", words.len());
+    println!("| k | slop | engine | p50 µs | p95 µs | p99 µs |\n|---:|---:|---|---:|---:|---:|");
+    for slop in [0, 2] {
+        let queries: Vec<PhraseQuery> = words
+            .iter()
+            .map(|w| {
+                let mut q = PhraseQuery::new(w.iter().map(|t| Term::from_field_text(body, t)).collect());
+                q.set_slop(slop);
+                q
+            })
+            .collect();
+        for k in [10, 100] {
+            for w in &words {
+                let phrase = [(w.as_slice(), slop, 1.0)];
+                assert_eq!(searcher.search_phrases([], &phrase, k), searcher.search_phrases_exhaustive([], &phrase, k));
+            }
+            let collector = TopDocs::with_limit(k).order_by_score();
+            let mut samples = [Vec::new(), Vec::new()];
+            let mut order: Vec<usize> = (0..words.len()).collect();
+            let mut state = 7;
+            for round in 0..rounds {
+                shuffle(&mut order, &mut state);
+                for offset in 0..2 {
+                    let e = (round + offset) % 2;
+                    for &i in &order {
+                        let t = Instant::now();
+                        if e == 0 {
+                            black_box(searcher.search_phrases([], &[(words[i].as_slice(), slop, 1.0)], k));
+                        } else {
+                            black_box(tantivy.search(&queries[i], &collector).unwrap());
+                        }
+                        samples[e].push(t.elapsed());
+                    }
+                }
+            }
+            for (name, mut s) in ["completype-fts", "tantivy 0.27"].into_iter().zip(samples) {
+                let [p50, p95, p99] = quantiles(&mut s);
+                println!("| {k} | {slop} | {name} | {p50:.1} | {p95:.1} | {p99:.1} |");
+            }
+        }
+    }
 }
