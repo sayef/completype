@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/sayef/completype/compare/v0.2.4...v0.2.5) - 2026-11-26
+
 ### Added
 
 - Experimental `completype.fts` Python module over `completype-fts`: `Index`, `Writer`, `Reader`, `Filter` and
