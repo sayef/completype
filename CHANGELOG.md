@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows
 
 - Experimental `completype.fts` Python module over `completype-fts`: `Index`, `Writer`, `Reader`, `Filter` and
   `Hit`, with text, keyword and numeric fields, stored payloads, stemming, stop words and typo tolerance.
+  `Index.open(path, positions=True)` keeps token positions, so quoted phrases (`"new york"`, `"new york"~2`) match
+  as phrases; without positions their words are searched as plain terms.
 
 ## [0.2.4](https://github.com/sayef/completype/compare/v0.2.3...v0.2.4) - 2026-11-25
 

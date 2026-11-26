@@ -181,6 +181,21 @@ def test_stop_words(tmp_path):
         stop_words("greek")
 
 
+def test_quoted_phrases(tmp_path):
+    docs = [("1", "new york pizza"), ("2", "york new pizza")]
+    plain = Index.open(tmp_path / "plain")
+    with plain.writer() as w:
+        for id, text in docs:
+            w.add(id, text)
+    assert set(ids(plain.search('"new york"'))) == {"1", "2"}
+    phrases = Index.open(tmp_path / "phrases", positions=True)
+    with phrases.writer() as w:
+        for id, text in docs:
+            w.add(id, text)
+    assert ids(phrases.search('"new york"')) == ["1"]
+    assert ids(Index.open(tmp_path / "phrases").search('"new york"')) == ["1"]
+
+
 def test_field_kinds_are_checked(tmp_path):
     with Index.open(tmp_path / "idx").writer() as w:
         with pytest.raises(completype.InvalidInputError, match='keyword field "n" must hold strings'):

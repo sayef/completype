@@ -204,16 +204,21 @@ fn deleted_and_filtered_documents_never_match_phrases() {
 }
 
 #[test]
-fn an_index_without_positions_refuses_phrases() {
+fn an_index_without_positions_searches_phrases_as_words() {
     let dir = temp("off");
     let index = Index::open(&dir).unwrap();
     let reader = build(&index, &[("a", body("new york"))]);
     assert!(!reader.has_positions());
     let query = Query::new(r#""new york" pizza"#);
     assert!(reader.try_query(&query).is_err());
-    assert!(
-        reader.query(&query).is_empty(),
-        "phrases match nothing there"
+    assert_eq!(
+        ids(&reader.query(&query)),
+        ["a"],
+        "phrase words are searched as plain terms"
+    );
+    assert_eq!(
+        ids(&reader.query(&Query::new("pizza").phrase("new york"))),
+        ["a"]
     );
     assert_eq!(reader.try_query(&Query::new(r#""york""#)).unwrap().len(), 1);
     assert!(Index::open(&dir)

@@ -171,7 +171,8 @@ struct Index {
 impl Index {
     /// Opens the index in `path`, creating an empty one if there is none.
     #[staticmethod]
-    #[pyo3(signature = (path, *, language = None, keep_accents = None, stop_words = None, reordering = "on_merge", first_letter_typos = false))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (path, *, language = None, keep_accents = None, stop_words = None, reordering = "on_merge", first_letter_typos = false, positions = None))]
     fn open(
         py: Python<'_>,
         path: PathBuf,
@@ -180,6 +181,7 @@ impl Index {
         stop_words: Option<&Bound<'_, PyAny>>,
         reordering: &str,
         first_letter_typos: bool,
+        positions: Option<bool>,
     ) -> PyResult<Self> {
         let reordering = match reordering {
             "never" => fts::Reordering::Never,
@@ -218,6 +220,9 @@ impl Index {
         }
         if let Some(stop_words) = stop_words {
             index = index.with_stop_words(stop_words);
+        }
+        if let Some(on) = positions {
+            index = index.with_positions(on);
         }
         Ok(Self { index, path })
     }

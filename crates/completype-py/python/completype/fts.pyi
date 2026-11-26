@@ -34,9 +34,11 @@ class Index:
         stop_words: str | Sequence[str] | None = None,
         reordering: Literal["never", "on_merge", "always"] = "on_merge",
         first_letter_typos: bool = False,
+        positions: bool | None = None,
     ) -> Index:
-        """Opens the index in `path`, creating it if missing. `language` and `keep_accents` default to what the
-        index was built with; `stop_words`, a language or a list of words, are left out of queries."""
+        """Opens the index in `path`, creating it if missing. `language`, `keep_accents` and `positions` default
+        to what the index was built with; `stop_words`, a language or a list of words, are left out of queries.
+        `positions=True` keeps token positions so quoted phrases match as phrases."""
     @property
     def path(self) -> Path: ...
     @property
