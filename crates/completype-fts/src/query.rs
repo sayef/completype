@@ -236,10 +236,36 @@ fn integer_bounds(lower: Bound<Number>, upper: Bound<Number>) -> Option<(i64, i6
     (low <= high).then_some((low, high))
 }
 
+/// The text outside double quotes, and each quoted phrase with the slop of a following `~N`.
+pub(crate) fn split_phrases(text: &str) -> (String, Vec<(String, u32)>) {
+    let (mut plain, mut phrases) = (String::new(), Vec::new());
+    let mut rest = text;
+    while let Some(open) = rest.find('"') {
+        let Some(close) = rest[open + 1..].find('"') else {
+            break;
+        };
+        plain.push_str(&rest[..open]);
+        plain.push(' ');
+        let phrase = &rest[open + 1..open + 1 + close];
+        rest = &rest[open + close + 2..];
+        let mut slop = 0;
+        if let Some(after) = rest.strip_prefix('~') {
+            let digits = after.len() - after.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            slop = after[..digits].parse().unwrap_or(u32::MAX);
+            rest = &after[digits..];
+        }
+        phrases.push((phrase.to_owned(), slop));
+    }
+    plain.push_str(rest);
+    (plain, phrases)
+}
+
 /// A search over named text fields with boosts, an optional filter and a result limit.
+/// Quoted text is a phrase, `"new york"~2` one with slop, which needs an index with positions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Query {
     pub(crate) text: String,
+    pub(crate) phrases: Vec<(String, u32)>,
     pub(crate) fields: Vec<(String, f32)>,
     pub(crate) filter: Option<Filter>,
     pub(crate) limit: usize,
@@ -251,11 +277,24 @@ impl Query {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            phrases: Vec::new(),
             fields: Vec::new(),
             filter: None,
             limit: 10,
             typos: true,
         }
+    }
+
+    /// Also scores documents holding `text`'s words next to each other, in order.
+    pub fn phrase(self, text: impl Into<String>) -> Self {
+        self.phrase_slop(text, 0)
+    }
+
+    /// A phrase whose words may be up to `slop` moves apart, Lucene's slop; each match counts
+    /// `1 / (1 + distance)`.
+    pub fn phrase_slop(mut self, text: impl Into<String>, slop: u32) -> Self {
+        self.phrases.push((text.into(), slop));
+        self
     }
 
     /// Searches `field`, its BM25 scores multiplied by `boost`.
@@ -278,5 +317,24 @@ impl Query {
     pub fn exact(mut self) -> Self {
         self.typos = false;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_phrases;
+
+    #[test]
+    fn quoted_phrases_and_slop_are_split_from_the_text() {
+        let (text, phrases) = split_phrases(r#""new york"~2 pizza "big apple" "open"#);
+        assert_eq!(
+            text.split_whitespace().collect::<Vec<_>>(),
+            ["pizza", "\"open"]
+        );
+        assert_eq!(
+            phrases,
+            [("new york".to_owned(), 2), ("big apple".to_owned(), 0)]
+        );
+        assert_eq!(split_phrases("plain").1, []);
     }
 }

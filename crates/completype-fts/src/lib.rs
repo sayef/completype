@@ -8,6 +8,8 @@ mod fuzzy;
 mod index;
 mod language;
 mod norm;
+mod phrase;
+mod positions;
 mod query;
 mod reorder;
 mod search;

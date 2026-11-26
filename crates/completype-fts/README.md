@@ -55,6 +55,15 @@ let index = Index::open("my-index")?
     .with_stop_words(StopWords::snowball(Language::English).unwrap().with(["etc"]));
 ```
 
+Phrases, which need positions, chosen when the index is created:
+
+```rust
+let index = Index::open("my-index")?.with_positions(true);
+// ...
+let hits = reader.query(&Query::new(r#""new york" pizza"#));
+let hits = reader.query(&Query::new("pizza").phrase_slop("new york", 2));
+```
+
 ## What it does
 
 - **Exact BM25.** Results equal scoring every matching document (Lucene's one-byte document lengths, `k1 = 1.2`, `b = 0.75`), ties in document order. Pruning never changes a result.
@@ -70,9 +79,11 @@ let index = Index::open("my-index")?
 - **Stemming.** `Analyzer::stem` reduces words to their Snowball stem (35 languages, via `frostem`) at index and query time, before folding accents. The index records its analyzer at the first commit, `Index::open` adopts it, and a reader or writer with a different one is refused.
 - **Stop words.** `Index::with_stop_words` leaves words out of queries, never out of the index; a query of nothing but stop words keeps them all. `StopWords::snowball` gives the Snowball project's list for 17 languages (BSD-3-Clause, see `stopwords/LICENSE`). A typo corrected to a stop word is dropped too.
 
+- **Phrases.** `Index::with_positions(true)` keeps every token's position, per field, in sections of their own aligned with the postings windows, so other queries never read them. A quoted phrase (`"new york"`, or `"new york"~2` with Lucene's slop) or `Query::phrase` is one more clause, scored like Lucene: BM25 of the phrase frequency, with the IDFs of its words summed; a sloppy match counts `1 / (1 + distance)`. Its window bound is the smallest bound of its words, since a phrase occurs no more often than its rarest word, so results stay exact. Phrase words keep stop words, are stemmed like everything else and are never spelling-corrected. Repeated values of one field are 100 positions apart, so phrases do not join them. A phrase alone is matched in document order, led by its rarest word, which the others reach through skip entries every 16 windows. Positions are recorded in the manifest at the first commit; they add about half to a segment of short texts and double one of long texts. `Reader::query` treats phrases as matching nothing in segments without positions; `Reader::try_query` refuses them. Version 4 segments, from before positions, still open.
+
 ## Not yet
 
-Phrase and proximity queries, facet counts, sorting by a field, per-field analyzers.
+Facet counts, sorting by a field, per-field analyzers.
 
 ## Python
 

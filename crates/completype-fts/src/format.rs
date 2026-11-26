@@ -3,18 +3,24 @@
 
 pub(crate) const WINDOW: usize = u128::BITS as usize;
 pub(crate) const MASK_FROM: usize = 16;
-pub(crate) const MAGIC: &[u8; 8] = b"CTFTS\0\0\x04";
+pub(crate) const MAGIC: &[u8; 8] = b"CTFTS\0\0\x05";
+/// Version 4 segments lack the position sections and are still read.
+pub(crate) const MAGIC_V4: &[u8; 8] = b"CTFTS\0\0\x04";
 /// Zero bytes after the bodies, so bit-packed reads never run past the end.
 pub(crate) const PADDING: usize = 8;
 /// Dictionary values with this bit hold a term's only posting instead of a record offset.
 pub(crate) const INLINE: u64 = 1 << 63;
 /// Where an inline posting keeps its field.
 pub(crate) const INLINE_FIELD_SHIFT: u32 = 48;
-pub(crate) const HEADER_LEN: usize = 8 + 4 + 4 + 8 + 8 * SECTIONS;
+pub(crate) const fn header_len(sections: usize) -> usize {
+    8 + 4 + 4 + 8 + 8 * sections
+}
+pub(crate) const HEADER_LEN: usize = header_len(SECTIONS);
 pub(crate) const K1: f32 = 1.2;
 pub(crate) const B: f32 = 0.75;
 
-pub(crate) const SECTIONS: usize = 14;
+pub(crate) const SECTIONS: usize = 16;
+pub(crate) const SECTIONS_V4: usize = 14;
 pub(crate) const NORMS: usize = 0;
 pub(crate) const ID_OFFSETS: usize = 1;
 pub(crate) const ID_BYTES: usize = 2;
@@ -29,6 +35,11 @@ pub(crate) const KEYWORD_DOCS: usize = 10;
 pub(crate) const NUMBERS: usize = 11;
 pub(crate) const STORED_INDEX: usize = 12;
 pub(crate) const STORED: usize = 13;
+/// Term to the offset of its positions; empty when the segment has none.
+pub(crate) const POSITION_TERMS: usize = 14;
+pub(crate) const POSITIONS: usize = 15;
+/// Positions between values of a repeated text field, so phrases do not join them.
+pub(crate) const POSITION_GAP: u32 = 100;
 
 /// The most a stored term frequency can be.
 pub(crate) const MAX_TF: u32 = u16::MAX as u32;
@@ -115,6 +126,21 @@ impl Frequencies<'_> {
         let word = u32::from_le_bytes(self.packed[bit / 8..bit / 8 + 4].try_into().unwrap());
         ((word >> (bit % 8)) & ((1 << self.bits) - 1)) + 1
     }
+
+    /// Whether frequencies differ, so each must be read.
+    #[inline]
+    pub fn packed(&self) -> bool {
+        self.bits != 0
+    }
+
+    /// Sum of the frequencies before `rank`.
+    #[inline]
+    pub fn sum_before(&self, rank: usize) -> usize {
+        if self.bits == 0 {
+            return rank * self.constant as usize;
+        }
+        (0..rank).map(|r| self.get(r) as usize).sum()
+    }
 }
 
 pub(crate) fn pack_frequencies(out: &mut Vec<u8>, tfs: impl Iterator<Item = u32>, bits: u8) {
@@ -157,6 +183,16 @@ impl<'a> Headers<'a> {
             id: 0,
             body: 0,
             first: true,
+        }
+    }
+
+    /// Continues a term's headers at a window boundary, after window `previous`.
+    pub fn resume(bytes: &'a [u8], windows: u32, previous: u32, body: u32) -> Self {
+        Self {
+            id: previous,
+            body,
+            first: false,
+            ..Self::new(bytes, windows)
         }
     }
 

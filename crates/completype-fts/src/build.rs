@@ -5,11 +5,19 @@ use rustc_hash::FxHashMap;
 
 use crate::document::{Document, Number, DEFAULT_FIELD};
 use crate::format::*;
-use crate::{norm, reorder, stored, Analyzer};
+use crate::{norm, positions, reorder, stored, Analyzer};
 
-type Postings = FxHashMap<Box<str>, Vec<(u32, u32)>>;
+/// A term's postings in one field, and their positions when the segment keeps them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct List {
+    pub docs: Vec<(u32, u32)>,
+    /// `positions::kept(tf)` ascending positions per posting, in document order.
+    pub positions: Vec<u32>,
+}
+
+type Postings = FxHashMap<Box<str>, List>;
 /// A term, its field and its postings there.
-type FieldTerm<'a> = (&'a str, u8, &'a [(u32, u32)]);
+type FieldTerm<'a> = (&'a str, u8, &'a List);
 
 #[derive(Default)]
 struct TextField {
@@ -39,8 +47,14 @@ pub struct SegmentBuilder {
     keywords: Vec<KeywordField>,
     numbers: Vec<NumericField>,
     stored: Vec<Option<Box<[u8]>>>,
+    /// The current document's terms with their frequency, or with positions their slot in `tfs`.
     counts: FxHashMap<String, u32>,
+    tfs: Vec<u32>,
+    /// `(slot, position)` of each token of the current document, when keeping positions.
+    pending: Vec<(u32, u32)>,
+    sorted: Vec<u32>,
     reorder: bool,
+    positions: bool,
     dropped: Vec<u32>,
 }
 
@@ -80,8 +94,8 @@ impl SegmentBuilder {
         let field = self.text_field(DEFAULT_FIELD);
         let mut length = 0_u32;
         for token in tokens {
+            self.count(token, length);
             length = length.saturating_add(1);
-            self.count(token);
         }
         self.flush(field, doc, length);
     }
@@ -99,16 +113,19 @@ impl SegmentBuilder {
                 continue;
             }
             let field = self.text_field(name);
-            let mut length = 0_u32;
-            for (_, text) in document.text[i..].iter().filter(|(n, _)| n == name) {
+            let (mut length, mut position) = (0_u32, 0_u32);
+            for (v, (_, text)) in document.text[i..]
+                .iter()
+                .filter(|(n, _)| n == name)
+                .enumerate()
+            {
+                if v > 0 {
+                    position = position.saturating_add(POSITION_GAP);
+                }
                 analyzer.analyze(text, |token| {
+                    self.count(token, position);
                     length = length.saturating_add(1);
-                    match self.counts.get_mut(token) {
-                        Some(n) => *n += 1,
-                        None => {
-                            self.counts.insert(token.to_owned(), 1);
-                        }
-                    }
+                    position = position.saturating_add(1);
                 });
             }
             self.flush(field, doc, length);
@@ -124,13 +141,28 @@ impl SegmentBuilder {
         }
     }
 
-    fn count(&mut self, token: &str) {
-        match self.counts.get_mut(token) {
-            Some(n) => *n += 1,
-            None => {
-                self.counts.insert(token.to_owned(), 1);
+    #[inline]
+    fn count(&mut self, token: &str, position: u32) {
+        if !self.positions {
+            match self.counts.get_mut(token) {
+                Some(tf) => *tf += 1,
+                None => {
+                    self.counts.insert(token.to_owned(), 1);
+                }
             }
+            return;
         }
+        let slot = match self.counts.get(token) {
+            Some(&slot) => slot,
+            None => {
+                let slot = self.tfs.len() as u32;
+                self.counts.insert(token.to_owned(), slot);
+                self.tfs.push(0);
+                slot
+            }
+        };
+        self.tfs[slot as usize] += 1;
+        self.pending.push((slot, position));
     }
 
     fn flush(&mut self, field: usize, doc: u32, length: u32) {
@@ -139,16 +171,51 @@ impl SegmentBuilder {
             field.lengths.resize(doc as usize, 0);
             field.lengths.push(length);
         }
-        for (term, tf) in self.counts.drain() {
-            match field.postings.get_mut(term.as_str()) {
-                Some(list) => list.push((doc, tf)),
-                None => {
-                    field
-                        .postings
-                        .insert(term.into_boxed_str(), vec![(doc, tf)]);
-                }
+        // Counting sort of the document's positions by slot; each slot's stay ascending.
+        let mut starts = Vec::new();
+        if self.positions {
+            starts.reserve(self.tfs.len() + 1);
+            starts.push(0);
+            for &tf in &self.tfs {
+                starts.push(starts.last().unwrap() + tf);
+            }
+            self.sorted.clear();
+            self.sorted.resize(self.pending.len(), 0);
+            let mut next = starts.clone();
+            for &(slot, position) in &self.pending {
+                self.sorted[next[slot as usize] as usize] = position;
+                next[slot as usize] += 1;
+            }
+            self.pending.clear();
+        }
+        for (term, value) in self.counts.drain() {
+            let (tf, slot) = if self.positions {
+                (self.tfs[value as usize], value)
+            } else {
+                (value, 0)
+            };
+            let list = match field.postings.get_mut(term.as_str()) {
+                Some(list) => list,
+                None => field.postings.entry(term.into_boxed_str()).or_default(),
+            };
+            list.docs.push((doc, tf));
+            if self.positions {
+                let start = starts[slot as usize] as usize;
+                list.positions
+                    .extend_from_slice(&self.sorted[start..start + positions::kept(tf)]);
             }
         }
+        self.tfs.clear();
+    }
+
+    /// Keeps each token's position so phrases can be searched, at the cost of a larger segment.
+    pub fn positions(&mut self, on: bool) -> &mut Self {
+        self.positions = on;
+        self
+    }
+
+    pub(crate) fn keeps_positions(&self) -> bool {
+        self.positions
     }
 
     /// Reorders documents so similar ones share windows: smaller and faster, slower to build.
@@ -193,7 +260,7 @@ impl SegmentBuilder {
     }
 
     /// Sets a term's whole postings list in a field, in document order, for merging.
-    pub(crate) fn set_postings(&mut self, field: usize, term: &str, list: Vec<(u32, u32)>) {
+    pub(crate) fn set_postings(&mut self, field: usize, term: &str, list: List) {
         self.text[field].postings.insert(term.into(), list);
     }
 
@@ -260,9 +327,13 @@ impl SegmentBuilder {
         for field in &mut self.text {
             field.lengths = permute(std::mem::take(&mut field.lengths), new_of, count);
             field.postings.retain(|_, list| {
-                list.retain_mut(|p| map(&mut p.0));
-                list.sort_unstable_by_key(|p| p.0);
-                !list.is_empty()
+                if list.positions.is_empty() {
+                    list.docs.retain_mut(|p| map(&mut p.0));
+                    list.docs.sort_unstable_by_key(|p| p.0);
+                } else {
+                    renumber_with_positions(list, new_of);
+                }
+                !list.docs.is_empty()
             });
         }
         for field in &mut self.keywords {
@@ -310,7 +381,7 @@ impl SegmentBuilder {
             let lists = self
                 .text
                 .iter()
-                .flat_map(|f| f.postings.values().map(Vec::as_slice));
+                .flat_map(|f| f.postings.values().map(|l| l.docs.as_slice()));
             let forward = reorder::Forward::new(docs, lists);
             let order = reorder::order(&forward, docs);
             drop(forward);
@@ -359,12 +430,7 @@ impl SegmentBuilder {
             .text
             .iter()
             .enumerate()
-            .flat_map(|(f, field)| {
-                field
-                    .postings
-                    .iter()
-                    .map(move |(t, l)| (&**t, f as u8, l.as_slice()))
-            })
+            .flat_map(|(f, field)| field.postings.iter().map(move |(t, l)| (&**t, f as u8, l)))
             .collect();
         terms.sort_unstable_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(&b.1)));
         let mut term_count = 0_u32;
@@ -373,24 +439,48 @@ impl SegmentBuilder {
         let mut bodies = Vec::new();
         let mut dictionary = fst::MapBuilder::memory();
         let mut window = Vec::with_capacity(WINDOW);
+        let mut position_terms = fst::MapBuilder::memory();
+        let mut positions = Vec::new();
+        // Where postings stand every `positions::SKIP` windows, for the positions' skip entries.
+        let mut anchors: Vec<positions::Anchor> = Vec::new();
         for group in terms.chunk_by(|a, b| a.0 == b.0) {
             term_count += 1;
             let term = group[0].0;
-            if let [(_, field, [(doc, tf)])] = group {
-                let value = INLINE
-                    | u64::from(*field) << INLINE_FIELD_SHIFT
-                    | u64::from((*tf).min(MAX_TF)) << 32
-                    | u64::from(*doc);
-                dictionary
-                    .insert(term.as_bytes(), value)
+            if self.positions {
+                position_terms
+                    .insert(term.as_bytes(), positions.len() as u64)
                     .expect("sorted unique terms");
-                continue;
+            }
+            if let [(_, field, List { docs, positions: p })] = group {
+                if let [(doc, tf)] = docs.as_slice() {
+                    let value = INLINE
+                        | u64::from(*field) << INLINE_FIELD_SHIFT
+                        | u64::from((*tf).min(MAX_TF)) << 32
+                        | u64::from(*doc);
+                    dictionary
+                        .insert(term.as_bytes(), value)
+                        .expect("sorted unique terms");
+                    if self.positions {
+                        positions::write(&mut positions, docs, p, &[]);
+                    }
+                    continue;
+                }
             }
             dictionary
                 .insert(term.as_bytes(), table.len() as u64)
                 .expect("sorted unique terms");
             write_varint(&mut table, group.len() as u32);
-            for &(_, field, list) in group {
+            for &(
+                _,
+                field,
+                List {
+                    docs: list,
+                    positions: p,
+                },
+            ) in group
+            {
+                anchors.clear();
+                let (header_start, body_start) = (headers.len(), bodies.len());
                 let f = usize::from(field);
                 let field_norms = &norms[f * docs..(f + 1) * docs];
                 let lengths = &length_tables[f];
@@ -402,6 +492,16 @@ impl SegmentBuilder {
                 let mut previous = None;
                 for chunk in list.chunk_by(|a, b| a.0 as usize / WINDOW == b.0 as usize / WINDOW) {
                     let id = chunk[0].0 / WINDOW as u32;
+                    if self.positions
+                        && windows > 0
+                        && (windows as usize).is_multiple_of(positions::SKIP)
+                    {
+                        anchors.push(positions::Anchor {
+                            previous: previous.unwrap_or(0),
+                            headers: (headers.len() - header_start) as u32,
+                            body: (bodies.len() - body_start) as u32,
+                        });
+                    }
                     windows += 1;
                     window.clear();
                     window.extend(
@@ -426,10 +526,21 @@ impl SegmentBuilder {
                     previous = Some(id);
                 }
                 write_varint(&mut table, windows);
+                if self.positions {
+                    positions::write(&mut positions, list, p, &anchors);
+                }
             }
         }
         bodies.extend_from_slice(&[0; PADDING]);
         let dictionary = dictionary.into_inner().expect("in-memory dictionary");
+        let position_terms = if self.positions {
+            positions.extend_from_slice(&[0; PADDING]);
+            position_terms
+                .into_inner()
+                .expect("in-memory positions map")
+        } else {
+            Vec::new()
+        };
 
         let mut by_id: Vec<(&str, u32)> = self
             .ids
@@ -466,6 +577,8 @@ impl SegmentBuilder {
             numbers,
             stored_index,
             stored,
+            position_terms,
+            positions,
         ];
         let mut out = Vec::with_capacity(HEADER_LEN + sections.iter().map(Vec::len).sum::<usize>());
         out.extend_from_slice(MAGIC);
@@ -550,4 +663,24 @@ fn numeric_section(fields: &mut [NumericField], meta: &mut Vec<u8>) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Moves postings and their positions to new document numbers, dropping those mapped to `u32::MAX`.
+fn renumber_with_positions(list: &mut List, new_of: &[u32]) {
+    let mut moved = Vec::with_capacity(list.docs.len());
+    let mut at = 0;
+    for &(doc, tf) in &list.docs {
+        let new = new_of[doc as usize];
+        if new != u32::MAX {
+            moved.push((new, tf, at));
+        }
+        at += positions::kept(tf);
+    }
+    moved.sort_unstable_by_key(|m| m.0);
+    let mut positions = Vec::with_capacity(list.positions.len());
+    for &(_, tf, at) in &moved {
+        positions.extend_from_slice(&list.positions[at..at + positions::kept(tf)]);
+    }
+    list.docs = moved.into_iter().map(|(doc, tf, _)| (doc, tf)).collect();
+    list.positions = positions;
 }
