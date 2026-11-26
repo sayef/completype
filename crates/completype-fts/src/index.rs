@@ -736,7 +736,7 @@ impl Reader {
     /// The best documents for a query over named fields with boosts, within its filter.
     ///
     /// A query without terms returns the first documents the filter allows, with score 0.
-    /// Phrases match nothing in segments kept without positions; [`Reader::try_query`] refuses them.
+    /// Without positions, phrases are searched as plain words; [`Reader::try_query`] refuses them.
     pub fn query(&self, query: &Query) -> Vec<SearchHit> {
         self.run_query(query, false)
     }
@@ -744,8 +744,9 @@ impl Reader {
     /// [`Reader::query`], failing when it has a phrase and a segment keeps no positions.
     pub fn try_query(&self, query: &Query) -> io::Result<Vec<SearchHit>> {
         if !self.has_positions() {
-            let (_, phrases) = self.phrases(query);
-            if phrases.iter().any(|p| p.0.len() > 1) {
+            let (_, mut phrases) = crate::query::split_phrases(&query.text);
+            phrases.extend(query.phrases.iter().cloned());
+            if phrases.iter().any(|p| self.analyzer.terms(&p.0).len() > 1) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "the index was written without positions; cannot run a phrase query",
@@ -761,9 +762,16 @@ impl Reader {
     }
 
     /// The query's text outside quotes, and its phrases analysed, quoted ones first.
+    /// Without positions every phrase joins the plain text instead.
     fn phrases(&self, query: &Query) -> (String, Vec<(Vec<String>, u32)>) {
-        let (text, mut phrases) = crate::query::split_phrases(&query.text);
+        let (mut text, mut phrases) = crate::query::split_phrases(&query.text);
         phrases.extend(query.phrases.iter().cloned());
+        if !self.has_positions() {
+            for (phrase, _) in phrases.drain(..) {
+                text.push(' ');
+                text.push_str(&phrase);
+            }
+        }
         let analysed = phrases
             .into_iter()
             .map(|(text, slop)| (self.analyzer.terms(&text), slop))
