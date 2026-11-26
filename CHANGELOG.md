@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Experimental `completype.fts` Python module over `completype-fts`: `Index`, `Writer`, `Reader`, `Filter` and
+  `Hit`, with text, keyword and numeric fields, stored payloads, stemming, stop words and typo tolerance.
+
 ## [0.2.4](https://github.com/sayef/completype/compare/v0.2.3...v0.2.4) - 2026-11-25
 
 ### Changed

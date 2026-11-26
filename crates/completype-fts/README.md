@@ -72,4 +72,9 @@ let index = Index::open("my-index")?
 
 ## Not yet
 
-Phrase and proximity queries, facet counts, sorting by a field, per-field analyzers, Python bindings.
+Phrase and proximity queries, facet counts, sorting by a field, per-field analyzers.
+
+## Python
+
+Experimental bindings, with no semver promise, ship in the `completype` wheel as `completype.fts`; see the
+[full-text search guide](https://completype.pages.dev/guides/full-text-search/).

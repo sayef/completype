@@ -223,3 +223,31 @@ The [collections](../guides/collections.md) layer.
 ::: completype.AsyncClientNamespace
     options:
       heading_level: 3
+
+## Full-text search
+
+The experimental [full-text search](../guides/full-text-search.md) module, imported as `from completype import fts`.
+
+::: completype.fts.Index
+    options:
+      heading_level: 3
+
+::: completype.fts.Writer
+    options:
+      heading_level: 3
+
+::: completype.fts.Reader
+    options:
+      heading_level: 3
+
+::: completype.fts.Hit
+    options:
+      heading_level: 3
+
+::: completype.fts.Filter
+    options:
+      heading_level: 3
+
+::: completype.fts.stop_words
+    options:
+      heading_level: 3
